@@ -16,6 +16,7 @@ use crate::config::hypervisor::{get_hypervisor_plugin, HugePageType};
 use crate::config::TomlConfig;
 use crate::initdata::add_hypervisor_initdata_overrides;
 use crate::sl;
+use crate::unmeasured_initdata::add_hypervisor_unmeasured_initdata_overrides;
 
 use self::cri_containerd::{SANDBOX_CPU_PERIOD_KEY, SANDBOX_CPU_QUOTA_KEY, SANDBOX_MEM_KEY};
 
@@ -270,6 +271,9 @@ pub const KATA_ANNO_CFG_HYPERVISOR_VIRTIO_FS_EXTRA_ARGS: &str =
 /// The initdata annotation passed in when CVM launchs
 pub const KATA_ANNO_CFG_HYPERVISOR_INIT_DATA: &str =
     "io.katacontainers.config.hypervisor.cc_init_data";
+/// The unmeasured initdata annotation passed in when CVM launches
+pub const KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA: &str =
+    "io.katacontainers.config.hypervisor.cc_unmeasured_init_data";
 
 /// GPU specific annotations for remote hypervisor to help with instance selection
 /// It's for minimum number of GPUs required for the VM.
@@ -921,6 +925,10 @@ impl Annotation {
                     KATA_ANNO_CFG_HYPERVISOR_INIT_DATA => {
                         hv.security_info.initdata =
                             add_hypervisor_initdata_overrides(value).unwrap();
+                    }
+                    KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA => {
+                        hv.security_info.unmeasured_initdata =
+                            add_hypervisor_unmeasured_initdata_overrides(value).unwrap();
                     }
                     KATA_ANNO_CFG_HYPERVISOR_DEFAULT_GPUS => match self.get_value::<u32>(key) {
                         Ok(r) => {
