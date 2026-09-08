@@ -162,6 +162,11 @@ func (q *qemuPPC64le) buildInitdataDevice(ctx context.Context, devices []govmmQe
 	return devices
 }
 
+func (q *qemuPPC64le) buildUnmeasuredInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device {
+	hvLogger.Warnf("buildUnmeasuredInitdataDevice not implemented for PPC64le; ignoring initdata image: %s", initdataImage)
+	return devices
+}
+
 // append protection device
 func (q *qemuPPC64le) appendProtectionDevice(devices []govmmQemu.Device, firmware, firmwareVolume string, initdataDigest []byte) ([]govmmQemu.Device, string, error) {
 	switch q.protection {

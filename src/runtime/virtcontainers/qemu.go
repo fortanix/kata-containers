@@ -1157,6 +1157,10 @@ func (q *qemu) CreateVM(ctx context.Context, id string, network Network, hypervi
 		return err
 	}
 
+	if err := prepareUnmeasuredInitdataMount(q.Logger(), q.id, hypervisorConfig); err != nil {
+		return err
+	}
+
 	machine, err := q.getQemuMachine()
 	if err != nil {
 		return err
@@ -1263,6 +1267,10 @@ func (q *qemu) CreateVM(ctx context.Context, id string, network Network, hypervi
 
 	if len(hypervisorConfig.Initdata) > 0 {
 		devices = q.arch.buildInitdataDevice(ctx, devices, hypervisorConfig.InitdataImage)
+	}
+
+	if len(hypervisorConfig.UnmeasuredInitdata) > 0 {
+		devices = q.arch.buildUnmeasuredInitdataDevice(ctx, devices, hypervisorConfig.UnmeasuredInitdataImage)
 	}
 
 	// some devices configuration may also change kernel params, make sure this is called afterwards
@@ -1981,6 +1989,13 @@ func (q *qemu) cleanupVM() error {
 		initdataWorkdir := filepath.Join(string(filepath.Separator), "/run/kata-containers/shared/initdata", q.id)
 		if err := os.RemoveAll(initdataWorkdir); err != nil {
 			q.Logger().WithError(err).Warnf("failed to remove initdata work dir %s", initdataWorkdir)
+		}
+	}
+
+	if len(hypervisorConfig.UnmeasuredInitdata) > 0 {
+		initdataWorkdir := filepath.Join(string(filepath.Separator), "/run/kata-containers/shared/unmeasured-initdata", q.id)
+		if err := os.RemoveAll(initdataWorkdir); err != nil {
+			q.Logger().WithError(err).Warnf("failed to remove unmeasured initdata work dir %s", initdataWorkdir)
 		}
 	}
 
