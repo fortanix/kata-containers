@@ -4,6 +4,7 @@
 //
 mod initdata;
 
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -12,16 +13,19 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use slog::{info, o, warn, Drain, Logger};
 
-use crate::initdata::{locate_device, read_initdata};
+use crate::initdata::{locate_device, locate_unmeasured_device, read_initdata};
 use kata_types::initdata::InitData;
+use kata_types::unmeasured_initdata::UnmeasuredInitData;
 
 const DEV_DIR: &str = "/dev";
 const MEASURED_CFG_DIR: &str = "/run/measured-cfg";
+const UNMEASURED_CFG_DIR: &str = "/run/unmeasured-cfg";
 
 #[derive(Debug)]
 struct InitDataProcessor {
     dev_path: PathBuf,
     config_path: PathBuf,
+    unmeasured_config_path: PathBuf,
     logger: Logger,
 }
 
@@ -30,6 +34,7 @@ impl InitDataProcessor {
         Self {
             dev_path: PathBuf::from(DEV_DIR),
             config_path: PathBuf::from(MEASURED_CFG_DIR),
+            unmeasured_config_path: PathBuf::from(UNMEASURED_CFG_DIR),
             logger,
         }
     }
@@ -39,23 +44,33 @@ impl InitDataProcessor {
         self
     }
 
+    pub fn with_unmeasured_config_path(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.unmeasured_config_path = dir.into();
+        self
+    }
+
     pub fn with_dev_path(mut self, dir: impl Into<PathBuf>) -> Self {
         self.dev_path = dir.into();
         self
     }
 
     /// Writes configurations.
-    fn write_config_files(&self, raw_initdata: &[u8], initdata: &InitData) -> Result<()> {
+    fn write_config_files(
+        &self,
+        config_path: &Path,
+        raw_initdata: &[u8],
+        data: &HashMap<String, String>,
+    ) -> Result<()> {
         info!(
             self.logger,
-            "Writing configuration files to: {:?}", self.config_path
+            "Writing configuration files to: {:?}", config_path
         );
 
-        if std::fs::exists(&self.config_path)? {
-            std::fs::remove_dir_all(&self.config_path)?;
+        if std::fs::exists(config_path)? {
+            std::fs::remove_dir_all(config_path)?;
         }
 
-        let initdata_dir = self.config_path.join("initdata");
+        let initdata_dir = config_path.join("initdata");
         let initdata_file = initdata_dir.with_extension("toml");
 
         // Create the config_path.
@@ -66,7 +81,7 @@ impl InitDataProcessor {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            for dir in [&self.config_path, &initdata_dir] {
+            for dir in [config_path, &initdata_dir] {
                 let mut perms = std::fs::metadata(dir)?.permissions();
                 perms.set_mode(0o755);
                 std::fs::set_permissions(dir, perms)?;
@@ -82,11 +97,17 @@ impl InitDataProcessor {
         let mut written_files = 1;
 
         // Write each configuration item.
-        for (key, value) in initdata.data() {
-            let file_path = self.config_path.join(key).canonicalize()?;
+        for (key, value) in data {
+            let file_path = config_path.join(key);
+            let Some(parent) = file_path.parent() else {
+                warn!(self.logger, "Skipping invalid key: {}", key);
+                continue;
+            };
 
             // Security check: Ensure file path is within the directory.
-            if !file_path.starts_with(&self.config_path) {
+            let config_path = config_path.canonicalize()?;
+            let parent = parent.canonicalize()?;
+            if !parent.starts_with(&config_path) {
                 warn!(self.logger, "Skipping potentially dangerous key: {}", key);
                 continue;
             }
@@ -127,6 +148,14 @@ impl InitDataProcessor {
     pub fn process(&self) -> Result<()> {
         info!(self.logger, "Starting initdata processing");
 
+        self.process_measured_initdata()?;
+        self.process_unmeasured_initdata()?;
+
+        info!(self.logger, "Initdata processing completed successfully");
+        Ok(())
+    }
+
+    fn process_measured_initdata(&self) -> Result<()> {
         // 1. Locate and parse initdata.
         let initdata_device_opt = locate_device(&self.dev_path, &self.logger)?;
         let initdata_device = match initdata_device_opt {
@@ -157,9 +186,43 @@ impl InitDataProcessor {
         // TODO(burgerdev): 3. invoke the external initdata-validator.
 
         // 4. Write config files.
-        self.write_config_files(&initdata_content, &initdata)?;
+        self.write_config_files(&self.config_path, &initdata_content, initdata.data())?;
 
-        info!(self.logger, "Initdata processing completed successfully");
+        Ok(())
+    }
+
+    fn process_unmeasured_initdata(&self) -> Result<()> {
+        let initdata_device_opt = locate_unmeasured_device(&self.dev_path, &self.logger)?;
+        let initdata_device = match initdata_device_opt {
+            Some(device) => device,
+            None => return Ok(()),
+        };
+        info!(
+            self.logger,
+            "Reading unmeasured initdata from device: {:?}", initdata_device
+        );
+        let initdata_content =
+            read_initdata(&initdata_device).context("Failed to read unmeasured initdata")?;
+
+        let initdata: UnmeasuredInitData =
+            toml::from_slice(&initdata_content).context("parse unmeasured initdata failed")?;
+
+        info!(
+            self.logger,
+            "Successfully parsed unmeasured initdata with {} entries",
+            initdata.data().len()
+        );
+
+        initdata
+            .validate()
+            .context("structural unmeasured initdata validation failed")?;
+
+        self.write_config_files(
+            &self.unmeasured_config_path,
+            &initdata_content,
+            initdata.data(),
+        )?;
+
         Ok(())
     }
 }
@@ -188,6 +251,16 @@ fn main() -> Result<()> {
                     i += 2;
                 } else {
                     return Err(anyhow::anyhow!("--config-path requires a path argument"));
+                }
+            }
+            "--unmeasured-config-path" => {
+                if i + 1 < args.len() {
+                    processor = processor.with_unmeasured_config_path(&args[i + 1]);
+                    i += 2;
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "--unmeasured-config-path requires a path argument"
+                    ));
                 }
             }
             "--dev-path" => {
