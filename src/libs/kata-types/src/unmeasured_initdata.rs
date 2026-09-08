@@ -90,6 +90,12 @@ pub fn encode_unmeasured_initdata(initdata: &UnmeasuredInitData) -> String {
 
 /// Decode an unmeasured initdata annotation.
 pub fn decode_unmeasured_initdata(annotation: &str) -> Result<UnmeasuredInitData> {
+    let initdata_toml = decode_raw_unmeasured_initdata(annotation)?;
+
+    parse_unmeasured_initdata(&initdata_toml).context("parse unmeasured initdata")
+}
+
+fn decode_raw_unmeasured_initdata(annotation: &str) -> Result<String> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(annotation)
         .context("base64 decode")?;
@@ -100,7 +106,17 @@ pub fn decode_unmeasured_initdata(annotation: &str) -> Result<UnmeasuredInitData
         .read_to_string(&mut initdata_toml)
         .context("gz decoder failed")?;
 
-    parse_unmeasured_initdata(&initdata_toml).context("parse unmeasured initdata")
+    Ok(initdata_toml)
+}
+
+/// Decodes unmeasured initdata annotation for hypervisor config.
+pub fn add_hypervisor_unmeasured_initdata_overrides(initdata_annotation: &str) -> Result<String> {
+    if initdata_annotation.is_empty() {
+        return Ok("".to_string());
+    }
+
+    decode_raw_unmeasured_initdata(initdata_annotation)
+        .context("decoding unmeasured initdata annotation failed")
 }
 
 use std::io::Write;
@@ -149,6 +165,11 @@ mod tests {
 
         let encoded = encode_unmeasured_initdata(&initdata);
         let decoded = decode_unmeasured_initdata(&encoded).unwrap();
+        assert_eq!(decoded.version(), initdata.version());
+        assert_eq!(decoded.data(), initdata.data());
+
+        let decoded_raw = add_hypervisor_unmeasured_initdata_overrides(&encoded).unwrap();
+        let decoded = parse_unmeasured_initdata(&decoded_raw).unwrap();
         assert_eq!(decoded.version(), initdata.version());
         assert_eq!(decoded.data(), initdata.data());
     }
