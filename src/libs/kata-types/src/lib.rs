@@ -48,6 +48,9 @@ pub mod fs;
 /// any well-defined data from an untrusted host into a TEE (Trusted Execution Environment).
 pub mod initdata;
 
+/// File-based boot configuration that is not bound to attestation evidence.
+pub mod unmeasured_initdata;
+
 /// rootless vmm
 pub mod rootless;
 
