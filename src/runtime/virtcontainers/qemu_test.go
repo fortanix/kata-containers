@@ -775,17 +775,24 @@ func TestPrepareInitdataImage(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
+		magic   string
 	}{
 		{
 			"create an initdata image",
 			"some content",
+			"initdata",
+		},
+		{
+			"create an unmeasured initdata image",
+			"some unmeasured content",
+			"unmsrdat",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			imageDir := t.TempDir()
 			imagePath := path.Join(imageDir, "initdata.img")
-			err := prepareInitdataImage(tt.content, imagePath)
+			err := prepareInitdataImageWithMagic(tt.content, imagePath, tt.magic)
 			if err != nil {
 				t.Errorf("prepareInitdataImage() error = %v", err)
 			}
@@ -797,8 +804,8 @@ func TestPrepareInitdataImage(t *testing.T) {
 			}
 
 			magicNumber := fullContent[:8]
-			if string(magicNumber) != "initdata" {
-				t.Errorf("initdata magic number is not correct, got %s, want initdata", string(magicNumber))
+			if string(magicNumber) != tt.magic {
+				t.Errorf("initdata magic number is not correct, got %s, want %s", string(magicNumber), tt.magic)
 			}
 
 			length := binary.LittleEndian.Uint64(fullContent[8:16])
@@ -819,6 +826,14 @@ func TestPrepareInitdataImage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrepareInitdataImageRejectsInvalidMagic(t *testing.T) {
+	imageDir := t.TempDir()
+	imagePath := path.Join(imageDir, "initdata.img")
+
+	err := prepareInitdataImageWithMagic("some content", imagePath, "unmeasuredinitdata")
+	assert.Error(t, err)
 }
 
 // startTestQMPServer starts a goroutine acting as a minimal QMP server on serverConn.
