@@ -899,6 +899,10 @@ type HypervisorConfig struct {
 	// as a raw block device to guest
 	InitdataImage string
 
+	// The unmeasured initdata image on the host side to store unmeasured initdata
+	// and be mounted as a raw block device to guest.
+	UnmeasuredInitdataImage string
+
 	// GPU specific annotations (currently only applicable for Remote Hypervisor)
 	//DefaultGPUs specifies the number of GPUs required for the Kata VM
 	DefaultGPUs uint32
@@ -1446,6 +1450,30 @@ func prepareInitdataMount(logger *logrus.Entry, id string, config *HypervisorCon
 	return nil
 }
 
+func prepareUnmeasuredInitdataMount(logger *logrus.Entry, id string, config *HypervisorConfig) error {
+	if len(config.UnmeasuredInitdata) == 0 {
+		logger.Info("No unmeasured initdata provided. Skip prepare unmeasured initdata device")
+		return nil
+	}
+
+	logger.Info("Start to prepare unmeasured initdata")
+	initdataWorkdir := filepath.Join("/run/kata-containers/shared/unmeasured-initdata", id)
+	initdataImagePath := filepath.Join(initdataWorkdir, "data.img")
+
+	if err := os.MkdirAll(initdataWorkdir, 0o755); err != nil {
+		logger.WithField("unmeasured-initdata", "create unmeasured initdata image path").WithError(err).Error("mkdir failed")
+		return err
+	}
+
+	if err := prepareInitdataImageWithMagic(config.UnmeasuredInitdata, initdataImagePath, "unmsrdat"); err != nil {
+		logger.WithField("unmeasured-initdata", "prepare unmeasured initdata image").WithError(err).Error("prepare failed")
+		return err
+	}
+
+	config.UnmeasuredInitdataImage = initdataImagePath
+	return nil
+}
+
 // prepareInitdataImage will create an image with a very simple layout
 //
 // There will be multiple sectors. The first 8 bytes are Magic number "initdata".
@@ -1458,6 +1486,14 @@ func prepareInitdataMount(logger *logrus.Entry, id string, config *HypervisorCon
 // 16	  gzip(initdata toml) ...
 // (end of the last sector)  '\0' paddings
 func prepareInitdataImage(initdata string, imagePath string) error {
+	return prepareInitdataImageWithMagic(initdata, imagePath, "initdata")
+}
+
+func prepareInitdataImageWithMagic(initdata string, imagePath string, magic string) error {
+	if len(magic) != 8 {
+		return fmt.Errorf("initdata magic must be 8 bytes, got %d", len(magic))
+	}
+
 	SectorSize := 512
 	var buf bytes.Buffer
 	gzipper := gzip.NewWriter(&buf)
@@ -1484,7 +1520,7 @@ func prepareInitdataImage(initdata string, imagePath string) error {
 	}
 	defer file.Close()
 
-	_, err = file.Write([]byte("initdata"))
+	_, err = file.Write([]byte(magic))
 	if err != nil {
 		return fmt.Errorf("failed to write magic number to initdata image: %v", err)
 	}
