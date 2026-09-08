@@ -756,6 +756,10 @@ func (clh *cloudHypervisor) CreateVM(ctx context.Context, id string, network Net
 		return err
 	}
 
+	if err := setupUnmeasuredInitdata(clh, hypervisorConfig); err != nil {
+		return err
+	}
+
 	// Check if we should restore from template instead of creating new VM
 	if clh.config.BootFromTemplate && clh.shouldRestoreFromTemplate() {
 		clh.Logger().Info("Template files found, will restore VM instead of creating new")
@@ -879,6 +883,21 @@ func setupInitdata(clh *cloudHypervisor, hypervisorConfig *HypervisorConfig) err
 	}
 
 	clh.addInitdataDisk(hypervisorConfig.InitdataImage)
+
+	return nil
+}
+
+// setupUnmeasuredInitdata prepares and attaches the unmeasured initdata disk if present.
+func setupUnmeasuredInitdata(clh *cloudHypervisor, hypervisorConfig *HypervisorConfig) error {
+	if len(hypervisorConfig.UnmeasuredInitdata) == 0 {
+		return nil
+	}
+
+	if err := prepareUnmeasuredInitdataMount(clh.Logger(), clh.id, hypervisorConfig); err != nil {
+		return err
+	}
+
+	clh.addInitdataDisk(hypervisorConfig.UnmeasuredInitdataImage)
 
 	return nil
 }
@@ -2281,6 +2300,13 @@ func (clh *cloudHypervisor) cleanupVM(force bool) error {
 		initdataWorkdir := filepath.Join(string(filepath.Separator), "/run/kata-containers/shared/initdata", clh.id)
 		if err := os.RemoveAll(initdataWorkdir); err != nil {
 			clh.Logger().WithError(err).Warnf("failed to remove initdata work dir %s", initdataWorkdir)
+		}
+	}
+
+	if len(hypervisorConfig.UnmeasuredInitdata) > 0 {
+		initdataWorkdir := filepath.Join(string(filepath.Separator), "/run/kata-containers/shared/unmeasured-initdata", clh.id)
+		if err := os.RemoveAll(initdataWorkdir); err != nil {
+			clh.Logger().WithError(err).Warnf("failed to remove unmeasured initdata work dir %s", initdataWorkdir)
 		}
 	}
 
