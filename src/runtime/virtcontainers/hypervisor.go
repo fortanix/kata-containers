@@ -887,6 +887,10 @@ type HypervisorConfig struct {
 	// Initdata defines the initdata passed into guest when CreateVM
 	Initdata string
 
+	// UnmeasuredInitdata defines untrusted configuration passed into the guest when CreateVM.
+	// It is intentionally excluded from InitdataDigest.
+	UnmeasuredInitdata string
+
 	// InitdataDigest represents opaque binary data attached to a TEE and typically used
 	// for Guest attestation. This will be encoded in the format expected by QEMU for each TEE type.
 	InitdataDigest []byte
