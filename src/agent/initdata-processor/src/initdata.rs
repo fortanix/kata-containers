@@ -13,10 +13,12 @@ use slog::{info, Logger};
 
 /// Magic number of initdata device
 pub const INITDATA_MAGIC_NUMBER: &[u8] = b"initdata";
+pub const UNMEASURED_INITDATA_MAGIC_NUMBER: &[u8] = b"unmsrdat";
 
 const INITDATA_PATH_BY_ID: &str = "/dev/disk/by-id/virtio-initdata";
+const UNMEASURED_INITDATA_PATH_BY_ID: &str = "/dev/disk/by-id/virtio-unmeasured-initdata";
 
-fn is_initdata_device(path: &Path) -> Result<bool> {
+fn is_initdata_device(path: &Path, expected_magic: &[u8]) -> Result<bool> {
     let mut file = std::fs::File::open(path).context(format!("opening device {path:?}"))?;
 
     let mut magic = [0; 8];
@@ -31,14 +33,33 @@ fn is_initdata_device(path: &Path) -> Result<bool> {
             Ok(false)
         }
         Err(e) => Err(e).context(format!("reading from device {path:?}")),
-        Ok(()) => Ok(magic == INITDATA_MAGIC_NUMBER),
+        Ok(()) => Ok(magic == expected_magic),
     }
 }
 
 /// Locates the initdata device within /dev.
 pub fn locate_device(path: &Path, logger: &Logger) -> Result<Option<PathBuf>> {
+    locate_device_with_magic(path, logger, INITDATA_PATH_BY_ID, INITDATA_MAGIC_NUMBER)
+}
+
+/// Locates the unmeasured initdata device within /dev.
+pub fn locate_unmeasured_device(path: &Path, logger: &Logger) -> Result<Option<PathBuf>> {
+    locate_device_with_magic(
+        path,
+        logger,
+        UNMEASURED_INITDATA_PATH_BY_ID,
+        UNMEASURED_INITDATA_MAGIC_NUMBER,
+    )
+}
+
+fn locate_device_with_magic(
+    path: &Path,
+    logger: &Logger,
+    path_by_id: &str,
+    expected_magic: &[u8],
+) -> Result<Option<PathBuf>> {
     // On systems with udev, the device should be available under a by-id symlink.
-    let mut device_candidates = vec![INITDATA_PATH_BY_ID.into()];
+    let mut device_candidates = vec![path_by_id.into()];
 
     let mut errors = Vec::new();
     // Otherwise, we iterate over all devices and try to find a matching candidate.
@@ -71,7 +92,7 @@ pub fn locate_device(path: &Path, logger: &Logger) -> Result<Option<PathBuf>> {
     }
 
     for path in device_candidates {
-        match is_initdata_device(&path) {
+        match is_initdata_device(&path, expected_magic) {
             Ok(true) => return Ok(Some(path)),
             Ok(false) => continue,
             Err(e) => {
@@ -130,7 +151,7 @@ mod tests {
 
     use flate2::{write::GzEncoder, Compression};
 
-    use crate::initdata::{read_initdata, INITDATA_MAGIC_NUMBER};
+    use crate::initdata::{read_initdata, INITDATA_MAGIC_NUMBER, UNMEASURED_INITDATA_MAGIC_NUMBER};
 
     use super::is_initdata_device;
 
@@ -138,20 +159,27 @@ mod tests {
     fn test_is_initdata_device() {
         let dir = tempfile::tempdir().expect("should be able to create a temp dir");
 
-        let result = is_initdata_device(&dir.path().join("does-not-exist"));
+        let result = is_initdata_device(&dir.path().join("does-not-exist"), "initdata".as_bytes());
         assert!(result.is_err());
 
         let file_path = dir.path().join("not-initdata");
         std::fs::write(&file_path, "hello").expect("should be able to write a temp file");
-        let is_initdata =
-            is_initdata_device(&file_path).expect("reading this file should not fail");
+        let is_initdata = is_initdata_device(&file_path, INITDATA_MAGIC_NUMBER)
+            .expect("reading this file should not fail");
         assert!(!is_initdata);
 
         let file_path = dir.path().join("initdata");
         std::fs::write(&file_path, b"initdata").expect("should be able to write a temp file");
-        let is_initdata =
-            is_initdata_device(&file_path).expect("reading this file should not fail");
+        let is_initdata = is_initdata_device(&file_path, INITDATA_MAGIC_NUMBER)
+            .expect("reading this file should not fail");
         assert!(is_initdata);
+
+        let file_path = dir.path().join("unmeasured-initdata");
+        std::fs::write(&file_path, b"unmsrdat").expect("should be able to write a temp file");
+        let is_unmeasured_initdata =
+            is_initdata_device(&file_path, UNMEASURED_INITDATA_MAGIC_NUMBER)
+                .expect("reading this file should not fail");
+        assert!(is_unmeasured_initdata);
     }
 
     #[test]
