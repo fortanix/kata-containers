@@ -593,6 +593,10 @@ func addHypervisorConfigOverrides(ocispec specs.Spec, config *vc.SandboxConfig, 
 		return err
 	}
 
+	if err := addHypervisorUnmeasuredInitdataOverrides(ocispec, config); err != nil {
+		return err
+	}
+
 	if value, ok := ocispec.Annotations[vcAnnotations.MachineType]; ok {
 		if value != "" {
 			config.HypervisorConfig.HypervisorMachineType = value
@@ -1142,6 +1146,34 @@ func addHypervisorInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConf
 		sbConfig.HypervisorConfig.InitdataDigest = initdataDigest
 	}
 
+	return nil
+}
+
+func addHypervisorUnmeasuredInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConfig) error {
+	value, ok := ocispec.Annotations[vcAnnotations.UnmeasuredInitdata]
+	if !ok || len(value) == 0 {
+		return nil
+	}
+
+	b64Reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(value))
+	gzipReader, err := gzip.NewReader(b64Reader)
+	if err != nil {
+		return fmt.Errorf("unmeasured initdata create gzip reader error: %w", err)
+	}
+	defer gzipReader.Close()
+
+	content, err := io.ReadAll(gzipReader)
+	if err != nil {
+		return fmt.Errorf("uncompressing unmeasured initdata with gzip error: %w", err)
+	}
+
+	var initdata kataTypes.UnmeasuredInitdata
+	_, err = toml.Decode(string(content), &initdata)
+	if err != nil {
+		return fmt.Errorf("parsing unmeasured initdata annotation failed: %w", err)
+	}
+
+	sbConfig.HypervisorConfig.UnmeasuredInitdata = string(content)
 	return nil
 }
 

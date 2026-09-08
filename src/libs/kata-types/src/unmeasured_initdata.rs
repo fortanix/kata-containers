@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
+use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Read};
 
 /// Currently, unmeasured initdata only supports version 0.1.0.
 const UNMEASURED_INITDATA_VERSION: &str = "0.1.0";
@@ -80,6 +82,36 @@ pub fn parse_unmeasured_initdata(initdata_toml: &str) -> Result<UnmeasuredInitDa
     Ok(initdata)
 }
 
+/// Encode unmeasured initdata as an annotation.
+pub fn encode_unmeasured_initdata(initdata: &UnmeasuredInitData) -> String {
+    let toml_str = toml::to_string_pretty(initdata).unwrap();
+    create_encoded_input(&toml_str)
+}
+
+/// Decode an unmeasured initdata annotation.
+pub fn decode_unmeasured_initdata(annotation: &str) -> Result<UnmeasuredInitData> {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(annotation)
+        .context("base64 decode")?;
+
+    let mut decoder = GzDecoder::new(&decoded[..]);
+    let mut initdata_toml = String::new();
+    decoder
+        .read_to_string(&mut initdata_toml)
+        .context("gz decoder failed")?;
+
+    parse_unmeasured_initdata(&initdata_toml).context("parse unmeasured initdata")
+}
+
+use std::io::Write;
+
+fn create_encoded_input(content: &str) -> String {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(content.as_bytes()).unwrap();
+    let compressed = encoder.finish().unwrap();
+    base64::engine::general_purpose::STANDARD.encode(&compressed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +146,19 @@ mod tests {
         let serialized = initdata.to_vec().unwrap();
         let parsed = parse_unmeasured_initdata(std::str::from_utf8(&serialized).unwrap()).unwrap();
         assert_eq!(parsed.data(), initdata.data());
+
+        let encoded = encode_unmeasured_initdata(&initdata);
+        let decoded = decode_unmeasured_initdata(&encoded).unwrap();
+        assert_eq!(decoded.version(), initdata.version());
+        assert_eq!(decoded.data(), initdata.data());
+    }
+
+    #[test]
+    fn reject_invalid_encoded_unmeasured_initdata() {
+        assert!(decode_unmeasured_initdata("not-base64").is_err());
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode("not gzip");
+        assert!(decode_unmeasured_initdata(&encoded).is_err());
     }
 
     #[test]
