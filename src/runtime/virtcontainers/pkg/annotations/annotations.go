@@ -266,6 +266,9 @@ const (
 
 	// Initdata is the initdata passed in when CreateVM
 	Initdata = kataConfAnnotationsPrefix + "hypervisor.cc_init_data"
+
+	// UnmeasuredInitdata is untrusted configuration passed into the guest at VM creation.
+	UnmeasuredInitdata = kataConfAnnotationsPrefix + "hypervisor.cc_unmeasured_init_data"
 )
 
 // Runtime related annotations
