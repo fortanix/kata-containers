@@ -98,16 +98,16 @@ impl InitDataProcessor {
 
         // Write each configuration item.
         for (key, value) in data {
-            let file_path = config_path.join(key);
+            let file_path = initdata_dir.join(key);
             let Some(parent) = file_path.parent() else {
                 warn!(self.logger, "Skipping invalid key: {}", key);
                 continue;
             };
 
             // Security check: Ensure file path is within the directory.
-            let config_path = config_path.canonicalize()?;
+            let initdata_dir = initdata_dir.canonicalize()?;
             let parent = parent.canonicalize()?;
-            if !parent.starts_with(&config_path) {
+            if !parent.starts_with(&initdata_dir) {
                 warn!(self.logger, "Skipping potentially dangerous key: {}", key);
                 continue;
             }

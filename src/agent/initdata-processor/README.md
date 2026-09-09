@@ -131,8 +131,9 @@ region = "us-east-1"
 The processor writes those entries as files:
 
 ```text
-/run/unmeasured-cfg/aa.toml
-/run/unmeasured-cfg/cdh.toml
+/run/unmeasured-cfg/initdata.toml
+/run/unmeasured-cfg/initdata/aa.toml
+/run/unmeasured-cfg/initdata/cdh.toml
 ```
 
 Kata agent launches guest components with unmeasured AA/CDH config files when present. If they are absent, it falls back to the measured initdata config files.
