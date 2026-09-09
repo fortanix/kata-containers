@@ -500,11 +500,6 @@ fn build_substitution_ctx(
     let extension_root =
         guest_extension_image::extension_mount_root(guest_extension_image::COCO_EXTENSION_NAME)?;
 
-    let aa_config_path =
-        guest_component_config_path(initdata::UNMEASURED_AA_CONFIG_PATH, AA_CONFIG_PATH);
-    let cdh_config_path =
-        guest_component_config_path(initdata::UNMEASURED_CDH_CONFIG_PATH, CDH_CONFIG_PATH);
-
     let mut ctx = std::collections::HashMap::new();
     ctx.insert(
         "aa_attestation_uri".to_string(),
@@ -514,8 +509,16 @@ fn build_substitution_ctx(
         "aa_attestation_socket".to_string(),
         AA_ATTESTATION_SOCKET.to_string(),
     );
-    ctx.insert("aa_config_path".to_string(), aa_config_path);
-    ctx.insert("cdh_config_path".to_string(), cdh_config_path);
+    ctx.insert("aa_config_path".to_string(), AA_CONFIG_PATH.to_string());
+    ctx.insert("cdh_config_path".to_string(), CDH_CONFIG_PATH.to_string());
+    ctx.insert(
+        "unmeasured_aa_config_path".to_string(),
+        initdata::UNMEASURED_AA_CONFIG_PATH.to_string(),
+    );
+    ctx.insert(
+        "unmeasured_cdh_config_path".to_string(),
+        initdata::UNMEASURED_CDH_CONFIG_PATH.to_string(),
+    );
     ctx.insert("cdh_socket".to_string(), CDH_SOCKET.to_string());
     ctx.insert(
         "ocicrypt_config_path".to_string(),
@@ -550,11 +553,10 @@ fn build_substitution_ctx(
     Ok(ctx)
 }
 
-fn guest_component_config_path(unmeasured_config_path: &str, measured_config_path: &str) -> String {
+fn append_unmeasured_config_arg(args: &mut Vec<String>, unmeasured_config_path: &str) {
     if Path::new(unmeasured_config_path).exists() {
-        unmeasured_config_path.to_string()
-    } else {
-        measured_config_path.to_string()
+        args.push("-u".to_string());
+        args.push(unmeasured_config_path.to_string());
     }
 }
 
@@ -570,8 +572,6 @@ fn builtin_coco_plan(
     let mut plan = Vec::new();
 
     if max_level >= 1 {
-        let aa_config_path =
-            guest_component_config_path(initdata::UNMEASURED_AA_CONFIG_PATH, AA_CONFIG_PATH);
         let mut args = vec![
             "--attestation_sock".to_string(),
             AA_ATTESTATION_URI.to_string(),
@@ -580,11 +580,12 @@ fn builtin_coco_plan(
             args.push("--initdata-toml".to_string());
             args.push(initdata::INITDATA_TOML_PATH.to_string());
         }
+        append_unmeasured_config_arg(&mut args, initdata::UNMEASURED_AA_CONFIG_PATH);
         plan.push(guest_extension_image::LaunchSpec {
             id: "attestation-agent".to_string(),
             path: Path::new(AA_PATH).to_path_buf(),
             args,
-            config: Some(aa_config_path),
+            config: Some(AA_CONFIG_PATH.to_string()),
             env: vec![],
             wait_socket: Some(AA_ATTESTATION_SOCKET.to_string()),
             timeout_secs: config.launch_process_timeout.as_secs(),
@@ -592,13 +593,13 @@ fn builtin_coco_plan(
     }
 
     if max_level >= 2 {
-        let cdh_config_path =
-            guest_component_config_path(initdata::UNMEASURED_CDH_CONFIG_PATH, CDH_CONFIG_PATH);
+        let mut args = vec![];
+        append_unmeasured_config_arg(&mut args, initdata::UNMEASURED_CDH_CONFIG_PATH);
         plan.push(guest_extension_image::LaunchSpec {
             id: "confidential-data-hub".to_string(),
             path: Path::new(CDH_PATH).to_path_buf(),
-            args: vec![],
-            config: Some(cdh_config_path),
+            args,
+            config: Some(CDH_CONFIG_PATH.to_string()),
             env: vec![(
                 "OCICRYPT_KEYPROVIDER_CONFIG".to_string(),
                 OCICRYPT_CONFIG_PATH.to_string(),
