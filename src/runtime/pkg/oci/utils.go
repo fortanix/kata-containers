@@ -1149,9 +1149,43 @@ func addHypervisorInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConf
 	return nil
 }
 
+const unmeasuredInitdataConfigKey = "unmeasured-initdata-cfg.toml"
+
+type unmeasuredInitdataConfig struct {
+	Enabled bool `toml:"enabled"`
+}
+
+func unmeasuredInitdataEnabled(initdata string) (bool, error) {
+	var data kataTypes.Initdata
+	if _, err := toml.Decode(initdata, &data); err != nil {
+		return false, fmt.Errorf("parsing initdata failed: %w", err)
+	}
+
+	configContent, ok := data.Data[unmeasuredInitdataConfigKey]
+	if !ok {
+		return false, nil
+	}
+
+	var config unmeasuredInitdataConfig
+	if _, err := toml.Decode(configContent, &config); err != nil {
+		return false, fmt.Errorf("parsing unmeasured initdata config failed: %w", err)
+	}
+
+	return config.Enabled, nil
+}
+
 func addHypervisorUnmeasuredInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConfig) error {
 	value, ok := ocispec.Annotations[vcAnnotations.UnmeasuredInitdata]
 	if !ok || len(value) == 0 {
+		return nil
+	}
+
+	enabled, err := unmeasuredInitdataEnabled(sbConfig.HypervisorConfig.Initdata)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		ociLog.Debug("Unmeasured initdata annotation ignored because measured initdata did not enable it")
 		return nil
 	}
 

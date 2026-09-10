@@ -6,7 +6,7 @@ mod initdata;
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -15,11 +15,17 @@ use slog::{info, o, warn, Drain, Logger};
 
 use crate::initdata::{locate_device, locate_unmeasured_device, read_initdata};
 use kata_types::initdata::InitData;
-use kata_types::unmeasured_initdata::UnmeasuredInitData;
+use kata_types::unmeasured_initdata::{UnmeasuredInitData, UNMEASURED_INITDATA_CONFIG_KEY};
+use serde::Deserialize;
 
 const DEV_DIR: &str = "/dev";
 const MEASURED_CFG_DIR: &str = "/run/measured-cfg";
 const UNMEASURED_CFG_DIR: &str = "/run/unmeasured-cfg";
+
+#[derive(Debug, Deserialize)]
+struct UnmeasuredInitDataConfig {
+    enabled: bool,
+}
 
 #[derive(Debug)]
 struct InitDataProcessor {
@@ -149,7 +155,14 @@ impl InitDataProcessor {
         info!(self.logger, "Starting initdata processing");
 
         self.process_measured_initdata()?;
-        self.process_unmeasured_initdata()?;
+        if self.unmeasured_initdata_enabled()? {
+            self.process_unmeasured_initdata()?;
+        } else {
+            info!(
+                self.logger,
+                "Unmeasured initdata is not enabled by measured initdata"
+            );
+        }
 
         info!(self.logger, "Initdata processing completed successfully");
         Ok(())
@@ -191,6 +204,25 @@ impl InitDataProcessor {
         Ok(())
     }
 
+    fn unmeasured_initdata_enabled(&self) -> Result<bool> {
+        let config_path = self
+            .config_path
+            .join("initdata")
+            .join(UNMEASURED_INITDATA_CONFIG_KEY);
+        let config = match std::fs::read_to_string(&config_path) {
+            Ok(config) => config,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(e) => {
+                return Err(e).context(format!(
+                    "read unmeasured initdata config from {:?}",
+                    config_path
+                ))
+            }
+        };
+
+        unmeasured_initdata_enabled(&config)
+    }
+
     fn process_unmeasured_initdata(&self) -> Result<()> {
         let initdata_device_opt = locate_unmeasured_device(&self.dev_path, &self.logger)?;
         let initdata_device = match initdata_device_opt {
@@ -225,6 +257,13 @@ impl InitDataProcessor {
 
         Ok(())
     }
+}
+
+fn unmeasured_initdata_enabled(config: &str) -> Result<bool> {
+    let config: UnmeasuredInitDataConfig =
+        toml::from_str(config).context("parse unmeasured initdata config failed")?;
+
+    Ok(config.enabled)
 }
 
 fn create_logger() -> Logger {
@@ -277,4 +316,15 @@ fn main() -> Result<()> {
 
     // Execute the processing.
     processor.process().context("Initdata processing failed")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn measured_config_controls_unmeasured_initdata() {
+        assert!(!unmeasured_initdata_enabled("enabled = false").unwrap());
+        assert!(unmeasured_initdata_enabled("enabled = true").unwrap());
+    }
 }
