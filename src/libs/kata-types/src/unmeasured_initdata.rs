@@ -9,8 +9,19 @@ use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, io::Read};
 
+use crate::initdata::parse_initdata;
+
 /// Currently, unmeasured initdata only supports version 0.1.0.
 const UNMEASURED_INITDATA_VERSION: &str = "0.1.0";
+/// Measured initdata data key that controls whether unmeasured initdata is consumed.
+pub const UNMEASURED_INITDATA_CONFIG_KEY: &str = "unmeasured-initdata-cfg.toml";
+
+/// Trusted measured initdata wrapper controlling unmeasured initdata consumption.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnmeasuredInitDataConfig {
+    /// Whether the guest should consume unmeasured initdata.
+    pub enabled: bool,
+}
 
 /// Unmeasured initdata contains file-based configuration supplied by an untrusted host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +130,22 @@ pub fn add_hypervisor_unmeasured_initdata_overrides(initdata_annotation: &str) -
         .context("decoding unmeasured initdata annotation failed")
 }
 
+/// Returns whether measured initdata enables unmeasured initdata consumption.
+pub fn unmeasured_initdata_enabled(initdata_toml: &str) -> Result<bool> {
+    if initdata_toml.is_empty() {
+        return Ok(false);
+    }
+
+    let initdata = parse_initdata(initdata_toml).context("parse measured initdata")?;
+    let Some(config) = initdata.data().get(UNMEASURED_INITDATA_CONFIG_KEY) else {
+        return Ok(false);
+    };
+
+    let config: UnmeasuredInitDataConfig =
+        toml::from_str(config).context("parse unmeasured initdata config")?;
+    Ok(config.enabled)
+}
+
 use std::io::Write;
 
 fn create_encoded_input(content: &str) -> String {
@@ -192,5 +219,33 @@ mod tests {
     fn keys_are_opaque_to_the_data_type() {
         let input = "version = '0.1.0'\n[data]\n'../aa.toml' = ''\n";
         assert!(parse_unmeasured_initdata(input).is_ok());
+    }
+
+    #[test]
+    fn measured_initdata_enables_unmeasured_initdata() {
+        let enabled = format!(
+            r#"version = "0.1.0"
+algorithm = "sha256"
+
+[data]
+"{}" = '''
+enabled = true
+'''
+"#,
+            UNMEASURED_INITDATA_CONFIG_KEY
+        );
+        assert!(unmeasured_initdata_enabled(&enabled).unwrap());
+
+        let disabled = enabled.replace("enabled = true", "enabled = false");
+        assert!(!unmeasured_initdata_enabled(&disabled).unwrap());
+
+        let missing = r#"version = "0.1.0"
+algorithm = "sha256"
+
+[data]
+"aa.toml" = ""
+"#;
+        assert!(!unmeasured_initdata_enabled(missing).unwrap());
+        assert!(!unmeasured_initdata_enabled("").unwrap());
     }
 }
