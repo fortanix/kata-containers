@@ -68,11 +68,21 @@ func encodeGzipBase64(t *testing.T, input string) string {
 	return base64.StdEncoding.EncodeToString(compressed.Bytes())
 }
 
+func measuredInitdataWithUnmeasuredGate(enabled bool) string {
+	return fmt.Sprintf(`version = "0.1.0"
+algorithm = "sha256"
+[data]
+"unmeasured-initdata-cfg.toml" = '''
+enabled = %t
+'''
+`, enabled)
+}
+
 func TestAddHypervisorUnmeasuredInitdataOverrides(t *testing.T) {
 	valid := `version = "0.1.0"
-[data]
-"aa.toml" = '''
-customer_id = "customer-a"
+	[data]
+	"aa.toml" = '''
+	customer_id = "customer-a"
 '''
 "cdh.toml" = '''
 region = "us-east-1"
@@ -90,13 +100,25 @@ region = "us-east-1"
 	}
 
 	digest := []byte("measured digest")
-	config := vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{InitdataDigest: digest}}
+	config := vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{
+		Initdata:       measuredInitdataWithUnmeasuredGate(true),
+		InitdataDigest: digest,
+	}}
 	err := addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: map[string]string{
 		vcAnnotations.UnmeasuredInitdata: encodeGzipBase64(t, valid),
 	}}, &config)
 	assert.NoError(t, err)
 	assert.Equal(t, valid, config.HypervisorConfig.UnmeasuredInitdata)
 	assert.Equal(t, digest, config.HypervisorConfig.InitdataDigest)
+
+	config = vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{
+		Initdata: measuredInitdataWithUnmeasuredGate(false),
+	}}
+	err = addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: map[string]string{
+		vcAnnotations.UnmeasuredInitdata: encodeGzipBase64(t, valid),
+	}}, &config)
+	assert.NoError(t, err)
+	assert.Empty(t, config.HypervisorConfig.UnmeasuredInitdata)
 }
 
 func TestAddHypervisorUnmeasuredInitdataOverridesRejectsInvalidInput(t *testing.T) {
@@ -107,7 +129,9 @@ func TestAddHypervisorUnmeasuredInitdataOverridesRejectsInvalidInput(t *testing.
 
 	for name, value := range tests {
 		t.Run(name, func(t *testing.T) {
-			config := vc.SandboxConfig{}
+			config := vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{
+				Initdata: measuredInitdataWithUnmeasuredGate(true),
+			}}
 			err := addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: map[string]string{
 				vcAnnotations.UnmeasuredInitdata: value,
 			}}, &config)
@@ -119,12 +143,14 @@ func TestAddHypervisorUnmeasuredInitdataOverridesRejectsInvalidInput(t *testing.
 
 func TestUnmeasuredInitdataAnnotationAllowlist(t *testing.T) {
 	input := "version = '0.1.0'\n[data]\n"
+	measured := measuredInitdataWithUnmeasuredGate(true)
 	spec := specs.Spec{Annotations: map[string]string{
+		vcAnnotations.Initdata:           encodeGzipBase64(t, measured),
 		vcAnnotations.UnmeasuredInitdata: encodeGzipBase64(t, input),
 	}}
 	config := vc.SandboxConfig{}
 	runtimeConfig := RuntimeConfig{HypervisorConfig: vc.HypervisorConfig{
-		EnableAnnotations: []string{"cc_unmeasured_init_data"},
+		EnableAnnotations: []string{"cc_init_data", "cc_unmeasured_init_data"},
 	}}
 
 	assert.NoError(t, addAnnotations(spec, &config, runtimeConfig))

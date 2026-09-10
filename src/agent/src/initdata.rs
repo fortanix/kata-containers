@@ -28,9 +28,12 @@ pub const UNMEASURED_INITDATA_PATH: &str = "/run/unmeasured-cfg";
 const AA_CONFIG_KEY: &str = "aa.toml";
 const CDH_CONFIG_KEY: &str = "cdh.toml";
 const POLICY_KEY: &str = "policy.rego";
+pub const UNMEASURED_INITDATA_CONFIG_KEY: &str = "unmeasured-initdata-cfg.toml";
 
 /// The path of initdata toml
 pub const INITDATA_TOML_PATH: &str = concatcp!(INITDATA_PATH, "/initdata.toml");
+pub const UNMEASURED_INITDATA_CONFIG_PATH: &str =
+    concatcp!(INITDATA_PATH, "/", UNMEASURED_INITDATA_CONFIG_KEY);
 
 /// The path of AA's config file
 pub const AA_CONFIG_PATH: &str = concatcp!(INITDATA_PATH, "/aa.toml");
@@ -174,6 +177,16 @@ pub async fn initialize_initdata(logger: &Logger) -> Result<Option<InitdataRetur
             .await
             .context("write cdh config failed")?;
         info!(logger, "write CDH config from initdata");
+    }
+
+    if let Some(config) = initdata.get_coco_data(UNMEASURED_INITDATA_CONFIG_KEY) {
+        tokio::fs::write(UNMEASURED_INITDATA_CONFIG_PATH, config)
+            .await
+            .context("write unmeasured initdata config failed")?;
+        info!(
+            logger,
+            "write unmeasured initdata config from measured initdata"
+        );
     }
 
     debug!(logger, "Initdata digest: {}", STANDARD.encode(&_digest));

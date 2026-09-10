@@ -13,6 +13,7 @@ slog.workspace = true
 slog-term.workspace = true
 # TODO(burgerdev): slog-async is used by a couple of crates, add to root Cargo.toml
 slog-async = "2.8.0"
+serde.workspace = true
 toml.workspace = true
 
 # Local dependencies

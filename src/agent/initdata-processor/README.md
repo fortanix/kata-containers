@@ -113,6 +113,22 @@ OPTIONS:
 
 Measured and unmeasured initdata are TOML documents with file content stored under the `[data]` table. Unmeasured initdata does not carry a digest algorithm.
 
+Unmeasured initdata is disabled by default. Measured initdata must include
+`unmeasured-initdata-cfg.toml` to enable it:
+
+```toml
+version = "0.1.0"
+algorithm = "sha256"
+
+[data]
+"unmeasured-initdata-cfg.toml" = '''
+enabled = true
+'''
+```
+
+If this file is absent, or if `enabled` is `false`, the processor ignores the
+unmeasured initdata device.
+
 Example unmeasured initdata:
 
 ```toml
