@@ -65,9 +65,15 @@ mod watcher;
 use config::GuestComponentsProcs;
 use mount::{cgroups_mount, general_mount};
 use sandbox::Sandbox;
+use serde::Deserialize;
 use signal::setup_signal_handler;
 use slog::{debug, error, info, o, warn, Logger};
 use uevent::watch_uevents;
+
+#[derive(Debug, Deserialize)]
+struct UnmeasuredInitDataConfig {
+    enabled: bool,
+}
 
 use futures::future::join_all;
 use rustjail::pipestream::PipeStream;
@@ -496,6 +502,7 @@ fn build_substitution_ctx(
     } else {
         String::new()
     };
+    let unmeasured_initdata_enabled = unmeasured_initdata_enabled();
 
     let extension_root =
         guest_extension_image::extension_mount_root(guest_extension_image::COCO_EXTENSION_NAME)?;
@@ -513,11 +520,19 @@ fn build_substitution_ctx(
     ctx.insert("cdh_config_path".to_string(), CDH_CONFIG_PATH.to_string());
     ctx.insert(
         "unmeasured_aa_config_path".to_string(),
-        initdata::UNMEASURED_AA_CONFIG_PATH.to_string(),
+        if unmeasured_initdata_enabled {
+            initdata::UNMEASURED_AA_CONFIG_PATH.to_string()
+        } else {
+            String::new()
+        },
     );
     ctx.insert(
         "unmeasured_cdh_config_path".to_string(),
-        initdata::UNMEASURED_CDH_CONFIG_PATH.to_string(),
+        if unmeasured_initdata_enabled {
+            initdata::UNMEASURED_CDH_CONFIG_PATH.to_string()
+        } else {
+            String::new()
+        },
     );
     ctx.insert("cdh_socket".to_string(), CDH_SOCKET.to_string());
     ctx.insert(
@@ -554,10 +569,20 @@ fn build_substitution_ctx(
 }
 
 fn append_unmeasured_config_arg(args: &mut Vec<String>, unmeasured_config_path: &str) {
-    if Path::new(unmeasured_config_path).exists() {
+    if unmeasured_initdata_enabled() && Path::new(unmeasured_config_path).exists() {
         args.push("-u".to_string());
         args.push(unmeasured_config_path.to_string());
     }
+}
+
+fn unmeasured_initdata_enabled() -> bool {
+    let Ok(config) = fs::read_to_string(initdata::UNMEASURED_INITDATA_CONFIG_PATH) else {
+        return false;
+    };
+
+    toml::from_str::<UnmeasuredInitDataConfig>(&config)
+        .map(|config| config.enabled)
+        .unwrap_or(false)
 }
 
 // Built-in launch plan used when no CoCo extension image is mounted. It reproduces

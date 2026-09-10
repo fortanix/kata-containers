@@ -3218,6 +3218,7 @@ dependencies = [
  "anyhow",
  "flate2",
  "kata-types",
+ "serde",
  "slog",
  "slog-async",
  "slog-term",

@@ -16,7 +16,9 @@ use crate::config::hypervisor::{get_hypervisor_plugin, HugePageType};
 use crate::config::TomlConfig;
 use crate::initdata::add_hypervisor_initdata_overrides;
 use crate::sl;
-use crate::unmeasured_initdata::add_hypervisor_unmeasured_initdata_overrides;
+use crate::unmeasured_initdata::{
+    add_hypervisor_unmeasured_initdata_overrides, unmeasured_initdata_enabled,
+};
 
 use self::cri_containerd::{SANDBOX_CPU_PERIOD_KEY, SANDBOX_CPU_QUOTA_KEY, SANDBOX_MEM_KEY};
 
@@ -927,8 +929,15 @@ impl Annotation {
                             add_hypervisor_initdata_overrides(value).unwrap();
                     }
                     KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA => {
-                        hv.security_info.unmeasured_initdata =
-                            add_hypervisor_unmeasured_initdata_overrides(value).unwrap();
+                        let initdata = self
+                            .get_annotations()
+                            .get(KATA_ANNO_CFG_HYPERVISOR_INIT_DATA)
+                            .map(|value| add_hypervisor_initdata_overrides(value).unwrap())
+                            .unwrap_or_default();
+                        if unmeasured_initdata_enabled(&initdata).unwrap_or(false) {
+                            hv.security_info.unmeasured_initdata =
+                                add_hypervisor_unmeasured_initdata_overrides(value).unwrap();
+                        }
                     }
                     KATA_ANNO_CFG_HYPERVISOR_DEFAULT_GPUS => match self.get_value::<u32>(key) {
                         Ok(r) => {
