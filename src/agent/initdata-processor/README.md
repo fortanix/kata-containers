@@ -159,9 +159,10 @@ Kata agent launches guest components with unmeasured AA/CDH config files when pr
 ### Enable and Start Service
 
 `make install` enables the service under `kata-containers.target` for systemd
-guests. Processing is currently passive: agent and guest-component startup do
-not wait for it. Systemd creates both output directories, and the processor
-leaves them empty when no initdata is present on a fresh boot.
+guests. The kata-agent service requires the processor to complete successfully
+before it starts and launches guest components. Systemd creates both output
+directories, and the processor leaves them empty when no initdata is present
+on a fresh boot.
 
 ```bash
 # Reload systemd configuration
