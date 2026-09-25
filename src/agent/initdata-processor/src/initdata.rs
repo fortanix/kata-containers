@@ -15,21 +15,20 @@ use slog::{info, Logger};
 pub const INITDATA_MAGIC_NUMBER: &[u8] = b"initdata";
 pub const UNMEASURED_INITDATA_MAGIC_NUMBER: &[u8] = b"unmsrdat";
 
-const INITDATA_PATH_BY_ID: &str = "/dev/disk/by-id/virtio-initdata";
-const UNMEASURED_INITDATA_PATH_BY_ID: &str = "/dev/disk/by-id/virtio-unmeasured-initdata";
+const INITDATA_PATH_BY_ID: &str = "disk/by-id/virtio-initdata";
+const UNMEASURED_INITDATA_PATH_BY_ID: &str = "disk/by-id/virtio-unmeasured-initdata";
 
 fn is_initdata_device(path: &Path, expected_magic: &[u8]) -> Result<bool> {
-    let mut file = std::fs::File::open(path).context(format!("opening device {path:?}"))?;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e).context(format!("opening device {path:?}")),
+    };
 
     let mut magic = [0; 8];
     match file.read_exact(&mut magic) {
         Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
             // Device is shorter than magic, thus it's not an initdata device.
-            Ok(false)
-        }
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            // Most likely, we're looking for a hard-coded path that's not present in this VM. If
-            // it's not there, it can't be an initdata device.
             Ok(false)
         }
         Err(e) => Err(e).context(format!("reading from device {path:?}")),
@@ -59,7 +58,7 @@ fn locate_device_with_magic(
     expected_magic: &[u8],
 ) -> Result<Option<PathBuf>> {
     // On systems with udev, the device should be available under a by-id symlink.
-    let mut device_candidates = vec![path_by_id.into()];
+    let mut device_candidates = vec![path.join(path_by_id)];
 
     let mut errors = Vec::new();
     // Otherwise, we iterate over all devices and try to find a matching candidate.
@@ -160,7 +159,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("should be able to create a temp dir");
 
         let result = is_initdata_device(&dir.path().join("does-not-exist"), "initdata".as_bytes());
-        assert!(result.is_err());
+        assert!(!result.unwrap());
 
         let file_path = dir.path().join("not-initdata");
         std::fs::write(&file_path, "hello").expect("should be able to write a temp file");
