@@ -72,12 +72,18 @@ impl InitDataProcessor {
             "Writing configuration files to: {:?}", config_path
         );
 
-        if std::fs::exists(config_path)? {
-            std::fs::remove_dir_all(config_path)?;
-        }
-
         let initdata_dir = config_path.join("initdata");
         let initdata_file = initdata_dir.with_extension("toml");
+
+        // Keep the runtime directory itself: systemd may bind-mount it writable.
+        if std::fs::exists(&initdata_dir)? {
+            std::fs::remove_dir_all(&initdata_dir)?;
+        }
+        match std::fs::remove_file(&initdata_file) {
+            Ok(()) => (),
+            Err(e) if e.kind() == ErrorKind::NotFound => (),
+            Err(e) => return Err(e).context("remove previous initdata file"),
+        }
 
         // Create the config_path.
         std::fs::create_dir_all(&initdata_dir)
@@ -321,6 +327,54 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn absent_initdata_leaves_runtime_directories_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let dev = root.path().join("dev");
+        let measured = root.path().join("measured-cfg");
+        let unmeasured = root.path().join("unmeasured-cfg");
+        for dir in [&dev, &measured, &unmeasured] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        let processor = InitDataProcessor::new(Logger::root(slog::Discard, o!()))
+            .with_dev_path(dev)
+            .with_config_path(&measured)
+            .with_unmeasured_config_path(&unmeasured);
+
+        processor.process().unwrap();
+
+        assert_eq!(std::fs::read_dir(measured).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(unmeasured).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn writing_config_preserves_runtime_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let inode = root.path().metadata().unwrap().ino();
+        let processor = InitDataProcessor::new(Logger::root(slog::Discard, o!()));
+        let data = HashMap::from([("aa.toml".to_string(), "config".to_string())]);
+        processor
+            .write_config_files(root.path(), b"initdata", &data)
+            .unwrap();
+        std::fs::write(root.path().join("initdata/stale.toml"), "stale").unwrap();
+
+        processor
+            .write_config_files(root.path(), b"replacement", &data)
+            .unwrap();
+
+        assert_eq!(root.path().metadata().unwrap().ino(), inode);
+        assert_eq!(
+            std::fs::read(root.path().join("initdata.toml")).unwrap(),
+            b"replacement"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("initdata/aa.toml")).unwrap(),
+            "config"
+        );
+        assert!(!root.path().join("initdata/stale.toml").exists());
+    }
 
     #[test]
     fn measured_config_controls_unmeasured_initdata() {
