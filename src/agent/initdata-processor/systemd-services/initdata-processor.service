@@ -7,6 +7,7 @@ Description=Kata InitData Processor
 Documentation=https://github.com/kata-containers/kata-containers
 DefaultDependencies=no
 After=local-fs.target
+Before=kata-agent.service
 ConditionPathExists=/usr/bin/initdata-processor
 ConditionFileIsExecutable=/usr/bin/initdata-processor
 
