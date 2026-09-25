@@ -861,7 +861,6 @@ EOF
 		popd
 	fi
 
-
 	if [[ "${AGENT_INIT}" == "yes" ]]; then
 		setup_agent_init "${AGENT_DEST}" "${init}"
 	else

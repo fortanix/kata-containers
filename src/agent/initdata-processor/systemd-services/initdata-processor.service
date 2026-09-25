@@ -7,9 +7,8 @@ Description=Kata InitData Processor
 Documentation=https://github.com/kata-containers/kata-containers
 DefaultDependencies=no
 After=local-fs.target
-Before=kata-agent.service
 ConditionPathExists=/usr/bin/initdata-processor
-ConditionPathIsExecutable=/usr/bin/initdata-processor
+ConditionFileIsExecutable=/usr/bin/initdata-processor
 
 [Service]
 Type=oneshot
@@ -25,7 +24,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/run/measured-cfg
+RuntimeDirectory=measured-cfg unmeasured-cfg
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/measured-cfg /run/unmeasured-cfg
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=kata-containers.target
