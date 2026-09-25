@@ -869,11 +869,11 @@ EOF
 		make
 		make install DESTDIR="${ROOTFS_DIR}"
 		popd
+
+		"${stripping_tool}" "${ROOTFS_DIR}/usr/bin/initdata-processor"
+
+		OK "initdata-processor installed"
 	fi
-
-	"${stripping_tool}" "${ROOTFS_DIR}/usr/bin/initdata-processor"
-
-	OK "initdata-processor installed"
 
 	if [[ "${AGENT_INIT}" == "yes" ]]; then
 		setup_agent_init "${AGENT_DEST}" "${init}"
