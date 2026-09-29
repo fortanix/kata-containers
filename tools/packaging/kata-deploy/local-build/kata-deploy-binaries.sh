@@ -1996,7 +1996,7 @@ handle_build() {
 	export final_tarball_path="${workdir}/kata-static-${build_target}.tar.zst"
 	final_tarball_name="$(basename "${final_tarball_path}")"
 	export final_tarball_name
-	rm -f "${final_tarball_name}"
+	rm -f "${final_tarball_path}"
 
 	case "${build_target}" in
 	all)
