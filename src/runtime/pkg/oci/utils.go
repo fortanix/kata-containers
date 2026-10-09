@@ -593,6 +593,10 @@ func addHypervisorConfigOverrides(ocispec specs.Spec, config *vc.SandboxConfig, 
 		return err
 	}
 
+	if err := addHypervisorUnmeasuredInitdataOverrides(ocispec, config); err != nil {
+		return err
+	}
+
 	if value, ok := ocispec.Annotations[vcAnnotations.MachineType]; ok {
 		if value != "" {
 			config.HypervisorConfig.HypervisorMachineType = value
@@ -1142,6 +1146,68 @@ func addHypervisorInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConf
 		sbConfig.HypervisorConfig.InitdataDigest = initdataDigest
 	}
 
+	return nil
+}
+
+const unmeasuredInitdataConfigKey = "unmeasured-initdata-cfg.toml"
+
+type unmeasuredInitdataConfig struct {
+	Enabled bool `toml:"enabled"`
+}
+
+func unmeasuredInitdataEnabled(initdata string) (bool, error) {
+	var data kataTypes.Initdata
+	if _, err := toml.Decode(initdata, &data); err != nil {
+		return false, fmt.Errorf("parsing initdata failed: %w", err)
+	}
+
+	configContent, ok := data.Data[unmeasuredInitdataConfigKey]
+	if !ok {
+		return false, nil
+	}
+
+	var config unmeasuredInitdataConfig
+	if _, err := toml.Decode(configContent, &config); err != nil {
+		return false, fmt.Errorf("parsing unmeasured initdata config failed: %w", err)
+	}
+
+	return config.Enabled, nil
+}
+
+func addHypervisorUnmeasuredInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConfig) error {
+	value, ok := ocispec.Annotations[vcAnnotations.UnmeasuredInitdata]
+	if !ok || len(value) == 0 {
+		return nil
+	}
+
+	enabled, err := unmeasuredInitdataEnabled(sbConfig.HypervisorConfig.Initdata)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		ociLog.Debug("Unmeasured initdata annotation ignored because measured initdata did not enable it")
+		return nil
+	}
+
+	b64Reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(value))
+	gzipReader, err := gzip.NewReader(b64Reader)
+	if err != nil {
+		return fmt.Errorf("unmeasured initdata create gzip reader error: %w", err)
+	}
+	defer gzipReader.Close()
+
+	content, err := io.ReadAll(gzipReader)
+	if err != nil {
+		return fmt.Errorf("uncompressing unmeasured initdata with gzip error: %w", err)
+	}
+
+	var initdata kataTypes.UnmeasuredInitdata
+	_, err = toml.Decode(string(content), &initdata)
+	if err != nil {
+		return fmt.Errorf("parsing unmeasured initdata annotation failed: %w", err)
+	}
+
+	sbConfig.HypervisorConfig.UnmeasuredInitdata = string(content)
 	return nil
 }
 
