@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Kata Contributors
+// Copyright (c) Fortanix, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 //
