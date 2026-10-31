@@ -151,7 +151,7 @@ The processor writes those entries as files:
 /run/unmeasured-cfg/cdh.toml
 ```
 
-Kata agent launches guest components with unmeasured AA/CDH config files when present. If they are absent, it falls back to the measured initdata config files.
+The Kata agent launches guest components with unmeasured and measured AA/CDH config files. In the absence of unmeasured config files, only the measured initdata configuration is loaded inside the guest.
 
 ## Systemd Service Management
 
