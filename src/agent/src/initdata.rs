@@ -133,8 +133,60 @@ pub struct InitdataReturnValue {
     pub _policy: Option<String>,
 }
 
+/// The standalone initdata-processor binary, installed into images that carry it.
+const INITDATA_PROCESSOR_PATH: &str = "/usr/bin/initdata-processor";
+
+/// Upper bound for one processor run; same as TimeoutStartSec of its systemd unit.
+const INITDATA_PROCESSOR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Run the initdata-processor from the agent on images without systemd (the NVIDIA GPU images
+/// use NVRC as init), where nothing else can order it before the agent.
+///
+/// Skipped when the binary is not installed, or when `ran_marker` exists: the processor's
+/// systemd unit creates [`UNMEASURED_INITDATA_PATH`] via `RuntimeDirectory=`, so its presence
+/// means the unit already ran. A processor failure is fatal, like the unit's `Requires=` on
+/// kata-agent.service.
+async fn run_initdata_processor(
+    logger: &Logger,
+    processor: &std::path::Path,
+    ran_marker: &std::path::Path,
+) -> Result<()> {
+    if !processor.exists() {
+        debug!(logger, "initdata-processor not installed, skipping");
+        return Ok(());
+    }
+    if ran_marker.exists() {
+        debug!(logger, "initdata-processor already ran (systemd), skipping");
+        return Ok(());
+    }
+
+    info!(logger, "running initdata-processor"; "path" => processor.display());
+    let mut child = tokio::process::Command::new(processor)
+        .kill_on_drop(true)
+        .spawn()
+        .context("spawn initdata-processor failed")?;
+    let status = tokio::time::timeout(INITDATA_PROCESSOR_TIMEOUT, child.wait())
+        .await
+        .context("initdata-processor timed out")?
+        .context("wait for initdata-processor failed")?;
+    if !status.success() {
+        bail!("initdata-processor failed: {status}");
+    }
+    Ok(())
+}
+
 pub async fn initialize_initdata(logger: &Logger) -> Result<Option<InitdataReturnValue>> {
     let logger = logger.new(o!("subsystem" => "initdata"));
+
+    if cfg!(feature = "init-data") {
+        run_initdata_processor(
+            &logger,
+            std::path::Path::new(INITDATA_PROCESSOR_PATH),
+            std::path::Path::new(UNMEASURED_INITDATA_PATH),
+        )
+        .await?;
+    }
+
     let Some(initdata_device) = detect_initdata_device(&logger).await? else {
         info!(
             logger,
@@ -212,5 +264,57 @@ mod tests {
     async fn parse_initdata() {
         let initdata = read_initdata(INITDATA_IMG_PATH).await.unwrap();
         assert_eq!(initdata, INITDATA_PLAINTEXT);
+    }
+
+    mod processor {
+        use crate::initdata::run_initdata_processor;
+        use std::path::Path;
+
+        fn logger() -> slog::Logger {
+            slog::Logger::root(slog::Discard, slog::o!())
+        }
+
+        #[tokio::test]
+        async fn skipped_when_binary_missing() {
+            let dir = tempfile::tempdir().unwrap();
+            let missing = dir.path().join("initdata-processor");
+            run_initdata_processor(&logger(), &missing, &dir.path().join("marker"))
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn skipped_when_systemd_already_ran() {
+            // /bin/false would fail the run, so success proves the processor was not executed.
+            let dir = tempfile::tempdir().unwrap();
+            run_initdata_processor(&logger(), Path::new("/bin/false"), dir.path())
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn runs_when_installed_and_not_yet_ran() {
+            let dir = tempfile::tempdir().unwrap();
+            run_initdata_processor(
+                &logger(),
+                Path::new("/bin/true"),
+                &dir.path().join("marker"),
+            )
+            .await
+            .unwrap();
+        }
+
+        #[tokio::test]
+        async fn failure_is_fatal() {
+            let dir = tempfile::tempdir().unwrap();
+            let err = run_initdata_processor(
+                &logger(),
+                Path::new("/bin/false"),
+                &dir.path().join("marker"),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains("initdata-processor failed"));
+        }
     }
 }
