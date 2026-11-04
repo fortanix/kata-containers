@@ -62,6 +62,8 @@ Warning: do not enable `virtio_fs_extra_args` in `enable_annotations` unless you
 | `io.katacontainers.config.hypervisor.block_device_driver` | string | the driver to be used for block device, valid values are `virtio-blk`, `virtio-scsi`, `nvdimm`|
 | `io.katacontainers.config.hypervisor.blk_logical_sector_size` | uint32 | logical sector size in bytes reported by block devices to the guest (0 = hypervisor default, must be a power of 2 between 512 and 65536) |
 | `io.katacontainers.config.hypervisor.blk_physical_sector_size` | uint32 | physical sector size in bytes reported by block devices to the guest (0 = hypervisor default, must be a power of 2 between 512 and 65536) |
+| `io.katacontainers.config.hypervisor.cc_init_data` | string | Base64-encoded, gzip-compressed measured initdata TOML. |
+| `io.katacontainers.config.hypervisor.cc_unmeasured_init_data` | string | Base64-encoded, gzip-compressed unmeasured initdata TOML, delivered on a separate read-only disk by QEMU or Cloud Hypervisor. Requires `enabled = true` in the measured `unmeasured-initdata-cfg.toml` entry and inclusion in `enable_annotations`. The payload is excluded from the measured initdata digest; the guest must run `initdata-processor` before consumers start. |
 | `io.katacontainers.config.hypervisor.cpu_features` | `string` | Comma-separated list of CPU features to pass to the CPU (QEMU) |
 | `io.katacontainers.config.hypervisor.default_max_vcpus` | uint32| the maximum number of vCPUs allocated for the VM by the hypervisor |
 | `io.katacontainers.config.hypervisor.default_memory` | uint32| the memory assigned for a VM by the hypervisor in `MiB` |
