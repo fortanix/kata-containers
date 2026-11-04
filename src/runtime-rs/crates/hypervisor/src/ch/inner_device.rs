@@ -643,6 +643,7 @@ mod tests {
             ("/coco.img", "extension-coco"),
             ("/devkit.img", "extension-devkit"),
             ("/initdata.img", ""),
+            ("/unmeasured.img", "unmeasured-initdata"),
         ] {
             let device = BlockDeviceModern {
                 device_id: path.into(),
@@ -666,11 +667,12 @@ mod tests {
         assert!(disks
             .iter()
             .all(|disk| disk.path.as_ref() != Some(&PathBuf::from("/rootfs.img"))));
-        assert_eq!(disks.len(), 3);
+        assert_eq!(disks.len(), 4);
         for (disk, (path, serial)) in disks.iter().zip([
             ("/coco.img", Some("extension-coco")),
             ("/devkit.img", Some("extension-devkit")),
             ("/initdata.img", None),
+            ("/unmeasured.img", Some("unmeasured-initdata")),
         ]) {
             assert_eq!(disk.path, Some(PathBuf::from(path)));
             assert!(disk.readonly);
