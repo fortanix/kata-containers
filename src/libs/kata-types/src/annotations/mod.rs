@@ -925,18 +925,33 @@ impl Annotation {
                         hv.security_info.guest_hook_path = value.to_string();
                     }
                     KATA_ANNO_CFG_HYPERVISOR_INIT_DATA => {
-                        hv.security_info.initdata =
-                            add_hypervisor_initdata_overrides(value).unwrap();
+                        hv.security_info.initdata = add_hypervisor_initdata_overrides(value)
+                            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
                     }
                     KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA => {
-                        let initdata = self
-                            .get_annotations()
-                            .get(KATA_ANNO_CFG_HYPERVISOR_INIT_DATA)
-                            .map(|value| add_hypervisor_initdata_overrides(value).unwrap())
-                            .unwrap_or_default();
-                        if unmeasured_initdata_enabled(&initdata).unwrap_or(false) {
+                        // Read the measured annotation directly: annotation iteration order
+                        // must not affect the trusted gate. Otherwise use measured TOML
+                        // already supplied through the runtime configuration.
+                        let initdata = if hv
+                            .security_info
+                            .is_annotation_enabled(KATA_ANNO_CFG_HYPERVISOR_INIT_DATA)
+                        {
+                            self.annotations
+                                .get(KATA_ANNO_CFG_HYPERVISOR_INIT_DATA)
+                                .map(|value| add_hypervisor_initdata_overrides(value))
+                                .transpose()
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
+                        } else {
+                            None
+                        };
+                        let initdata = initdata.as_deref().unwrap_or(&hv.security_info.initdata);
+                        if unmeasured_initdata_enabled(initdata)
+                            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
+                        {
                             hv.security_info.unmeasured_initdata =
-                                add_hypervisor_unmeasured_initdata_overrides(value).unwrap();
+                                add_hypervisor_unmeasured_initdata_overrides(value).map_err(
+                                    |err| io::Error::new(io::ErrorKind::InvalidData, err),
+                                )?;
                         }
                     }
                     KATA_ANNO_CFG_HYPERVISOR_DEFAULT_GPUS => match self.get_value::<u32>(key) {
