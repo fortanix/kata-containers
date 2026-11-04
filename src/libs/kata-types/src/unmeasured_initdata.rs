@@ -126,8 +126,10 @@ pub fn add_hypervisor_unmeasured_initdata_overrides(initdata_annotation: &str) -
         return Ok("".to_string());
     }
 
-    decode_raw_unmeasured_initdata(initdata_annotation)
-        .context("decoding unmeasured initdata annotation failed")
+    let initdata = decode_raw_unmeasured_initdata(initdata_annotation)
+        .context("decoding unmeasured initdata annotation failed")?;
+    parse_unmeasured_initdata(&initdata).context("validate unmeasured initdata annotation")?;
+    Ok(initdata)
 }
 
 /// Returns whether measured initdata enables unmeasured initdata consumption.
@@ -207,6 +209,24 @@ mod tests {
 
         let encoded = base64::engine::general_purpose::STANDARD.encode("not gzip");
         assert!(decode_unmeasured_initdata(&encoded).is_err());
+    }
+
+    #[test]
+    fn hypervisor_override_validates_unmeasured_document() {
+        assert_eq!(
+            add_hypervisor_unmeasured_initdata_overrides("").unwrap(),
+            ""
+        );
+        for document in [
+            "not a TOML document",
+            "version = '0.2.0'\n[data]\n",
+            "version = '0.1.0'\n[data]\n'aa.toml' = 42\n",
+        ] {
+            assert!(
+                add_hypervisor_unmeasured_initdata_overrides(&create_encoded_input(document))
+                    .is_err()
+            );
+        }
     }
 
     #[test]
