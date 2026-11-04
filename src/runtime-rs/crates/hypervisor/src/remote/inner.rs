@@ -15,8 +15,10 @@ use kata_types::{
         KATA_ANNO_CFG_HYPERVISOR_DEFAULT_GPU_MODEL, KATA_ANNO_CFG_HYPERVISOR_DEFAULT_MEMORY,
         KATA_ANNO_CFG_HYPERVISOR_DEFAULT_VCPUS, KATA_ANNO_CFG_HYPERVISOR_IMAGE_PATH,
         KATA_ANNO_CFG_HYPERVISOR_INIT_DATA, KATA_ANNO_CFG_HYPERVISOR_MACHINE_TYPE,
+        KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA,
     },
     capabilities::{Capabilities, CapabilityBits},
+    unmeasured_initdata::{parse_unmeasured_initdata, unmeasured_initdata_enabled},
 };
 use persist::sandbox_persist::Persist;
 use protocols::{
@@ -89,7 +91,7 @@ impl RemoteInner {
     fn prepare_annotations(
         &self,
         oci_annotations: &HashMap<String, String>,
-    ) -> HashMap<String, String> {
+    ) -> Result<HashMap<String, String>> {
         let mut annotations: HashMap<String, String> = HashMap::new();
         let config = &self.config;
         annotations.insert(
@@ -128,6 +130,17 @@ impl RemoteInner {
             KATA_ANNO_CFG_HYPERVISOR_INIT_DATA.to_string(),
             config.security_info.initdata.to_string(),
         );
+        if !config.security_info.unmeasured_initdata.is_empty()
+            && unmeasured_initdata_enabled(&config.security_info.initdata)
+                .context("check measured opt-in for remote unmeasured initdata")?
+        {
+            parse_unmeasured_initdata(&config.security_info.unmeasured_initdata)
+                .context("validate remote unmeasured initdata")?;
+            annotations.insert(
+                KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA.to_string(),
+                config.security_info.unmeasured_initdata.to_string(),
+            );
+        }
         annotations.insert(
             KATA_ANNO_CFG_HYPERVISOR_DEFAULT_GPUS.to_string(),
             config.remote_info.default_gpus.to_string(),
@@ -136,7 +149,7 @@ impl RemoteInner {
             KATA_ANNO_CFG_HYPERVISOR_DEFAULT_GPU_MODEL.to_string(),
             config.remote_info.default_gpu_model.to_string(),
         );
-        annotations
+        Ok(annotations)
     }
 
     pub(crate) async fn prepare_vm(
@@ -166,7 +179,7 @@ impl RemoteInner {
         let ctx = context::Context::default();
         let req = CreateVMRequest {
             id: id.to_string(),
-            annotations: self.prepare_annotations(annotations),
+            annotations: self.prepare_annotations(annotations)?,
             networkNamespacePath: netns.clone().unwrap_or_default(),
             ..Default::default()
         };
@@ -395,5 +408,54 @@ impl Persist for RemoteInner {
             client: None,
             exit_notify: Some(exit_notify),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwards_unmeasured_initdata_only_with_measured_opt_in() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut remote = RemoteInner::new(tx);
+        let oci_annotations = HashMap::new();
+        assert!(!remote
+            .prepare_annotations(&oci_annotations)
+            .unwrap()
+            .contains_key(KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA));
+        remote.config.security_info.unmeasured_initdata = "version = \"0.1.0\"\n[data]\n".into();
+        assert!(!remote
+            .prepare_annotations(&oci_annotations)
+            .unwrap()
+            .contains_key(KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA));
+        for enabled in [false, true] {
+            remote.config.security_info.initdata = format!(
+                r#"version = "0.1.0"
+algorithm = "sha256"
+[data]
+"unmeasured-initdata-cfg.toml" = 'enabled = {enabled}'
+"#
+            );
+            let annotations = remote.prepare_annotations(&oci_annotations).unwrap();
+            assert_eq!(
+                annotations[KATA_ANNO_CFG_HYPERVISOR_INIT_DATA],
+                remote.config.security_info.initdata
+            );
+            assert_eq!(
+                annotations.contains_key(KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA),
+                enabled
+            );
+            if enabled {
+                assert_eq!(
+                    annotations[KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA],
+                    remote.config.security_info.unmeasured_initdata
+                );
+            }
+        }
+        remote.config.security_info.unmeasured_initdata = "malformed".into();
+        assert!(remote.prepare_annotations(&oci_annotations).is_err());
+        remote.config.security_info.initdata = "malformed".into();
+        assert!(remote.prepare_annotations(&oci_annotations).is_err());
     }
 }
