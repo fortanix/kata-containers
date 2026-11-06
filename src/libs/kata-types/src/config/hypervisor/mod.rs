@@ -1383,6 +1383,11 @@ pub struct SecurityInfo {
     #[serde(default)]
     pub initdata: String,
 
+    /// Unmeasured initdata provides untrusted dynamic configuration in an encoded format
+    /// that users inject into the guest upon CVM launch.
+    #[serde(default)]
+    pub unmeasured_initdata: String,
+
     /// List of valid annotation names for the hypervisor.
     ///
     /// Each member of the list is a regular expression, representing the base name

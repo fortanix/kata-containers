@@ -415,6 +415,14 @@ get_coco_guest_components_container_image_ref() {
 }
 
 get_coco_guest_components_container_image_digest() {
+	# Downstream: a locally built extension image (see COCO_EXTENSION_LOCAL_IMAGE) has no registry
+	# digest; its local image ID is just as content-addressed for the artefact cache key.
+	if [[ -n "${COCO_EXTENSION_LOCAL_IMAGE:-}" ]]; then
+		docker image inspect --format '{{.Id}}' "${COCO_EXTENSION_LOCAL_IMAGE}" \
+			|| die "Local CoCo extension image not found: ${COCO_EXTENSION_LOCAL_IMAGE}"
+		return 0
+	fi
+
 	ensure_oras_installed >&2
 
 	local image_ref go_arch
@@ -532,14 +540,22 @@ install_coco_guest_components_from_oci() {
 
 	digest="$(get_coco_guest_components_container_image_digest)"
 
-	verify_guest_components_oci_provenance "${image}" "${digest}"
+	local image_to_extract="${image}@${digest}"
+	if [[ -n "${COCO_EXTENSION_LOCAL_IMAGE:-}" ]]; then
+		# Downstream: use the extension image built locally from the Fortanix guest-components
+		# fork. It is not published, so there is nothing to pull or attest.
+		image_to_extract="${COCO_EXTENSION_LOCAL_IMAGE}"
+		warn "Using locally built CoCo extension image ${image_to_extract}; skipping pull and provenance verification"
+	else
+		verify_guest_components_oci_provenance "${image}" "${digest}"
 
-	info "Pull and extract CoCo guest components from ${image}@${digest} (linux/${go_arch})"
+		info "Pull and extract CoCo guest components from ${image}@${digest} (linux/${go_arch})"
 
-	docker pull "${image}@${digest}"
+		docker pull "${image}@${digest}"
+	fi
 	# coco-extension is FROM scratch with no CMD/ENTRYPOINT; docker create needs
 	# an executable that exists in the image rootfs (we never run the container).
-	cid="$(docker create "${image}@${digest}" /usr/local/bin/attestation-agent --help)"
+	cid="$(docker create "${image_to_extract}" /usr/local/bin/attestation-agent --help)"
 	# docker export dumps the container filesystem, which carries scaffolding the
 	# image itself does not have: .dockerenv, the /etc/{hostname,hosts,resolv.conf,
 	# mtab} bind-mount placeholders and the /proc, /sys and /dev mountpoints. The
@@ -2004,7 +2020,7 @@ handle_build() {
 	export final_tarball_path="${workdir}/kata-static-${build_target}.tar.zst"
 	final_tarball_name="$(basename "${final_tarball_path}")"
 	export final_tarball_name
-	rm -f "${final_tarball_name}"
+	rm -f "${final_tarball_path}"
 
 	case "${build_target}" in
 	all)

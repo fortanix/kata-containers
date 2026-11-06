@@ -4567,13 +4567,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case::read_only(true, "read-only=on")]
-    #[case::writable(false, "read-only=off")]
+    #[case::read_only(true, "read-only=on", None)]
+    #[case::writable(false, "read-only=off", None)]
+    #[case::unmeasured_initdata(true, "read-only=on", Some("unmeasured-initdata"))]
     #[actix_rt::test]
     #[serial]
     async fn test_qemu_block_backend_read_only_params(
         #[case] is_readonly: bool,
         #[case] expected_param: &str,
+        #[case] serial: Option<&str>,
     ) {
         let dir = tempdir().unwrap();
         let image = dir.path().join("image.raw");
@@ -4590,7 +4592,7 @@ mod tests {
                 is_readonly,
                 false,
                 false,
-                None,
+                serial,
             )
             .unwrap();
 
@@ -4601,6 +4603,11 @@ mod tests {
                 && contains_param(&args[1..2], expected_param)
         }));
         assert!(!params.iter().any(|arg| arg.contains("auto-read-only=")));
+        if let Some(serial) = serial {
+            assert!(params.windows(2).any(|args| {
+                args[0] == "-device" && args[1].contains(&format!("serial={serial}"))
+            }));
+        }
 
         drop(cmdline);
         let _ = std::fs::remove_file(QMP_SOCKET_FILE);

@@ -171,6 +171,11 @@ func (q *qemuArm64) buildInitdataDevice(ctx context.Context, devices []govmmQemu
 	return devices
 }
 
+func (q *qemuArm64) buildUnmeasuredInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device {
+	hvLogger.Warnf("buildUnmeasuredInitdataDevice not implemented for arm64; ignoring initdata image: %s", initdataImage)
+	return devices
+}
+
 func (q *qemuArm64) appendProtectionDevice(devices []govmmQemu.Device, firmware, firmwareVolume string, initdataDigest []byte) ([]govmmQemu.Device, string, error) {
 	switch q.protection {
 	case ccaProtection:

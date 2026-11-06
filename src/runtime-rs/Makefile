@@ -223,8 +223,8 @@ DEFNETQUEUES := 1
 # Allowing pods to pass arbitrary virtiofsd arguments can be abused for malicious host-side behavior.
 DEFENABLEANNOTATIONS := [\"enable_iommu\", \"kernel_params\", \"kernel_verity_params\", \"default_vcpus\", \"default_memory\"]
 DEFENABLEANNOTATIONS_NVIDIA := []
-DEFENABLEANNOTATIONS_COCO := [\"enable_iommu\", \"kernel_params\", \"kernel_verity_params\", \"default_vcpus\", \"default_memory\", \"cc_init_data\"]
-DEFENABLEANNOTATIONS_COCO_NVIDIA := [\"cc_init_data\"]
+DEFENABLEANNOTATIONS_COCO := [\"enable_iommu\", \"kernel_params\", \"kernel_verity_params\", \"default_vcpus\", \"default_memory\", \"cc_init_data\", \"cc_unmeasured_init_data\"]
+DEFENABLEANNOTATIONS_COCO_NVIDIA := [\"cc_init_data\", \"cc_unmeasured_init_data\"]
 DEFDISABLEGUESTSECCOMP := true
 DEFEMPTYDIRMODE := shared-fs
 DEFEMPTYDIRMODE_COCO := block-encrypted
@@ -1077,7 +1077,7 @@ $(TARGET): $(GENERATED_FILES) $(TARGET_PATH)
 $(TARGET_PATH): $(SOURCES) | show-summary
 	@$(RELEASE_CARGO_PROFILE_ENV) RUSTFLAGS="$(EXTRA_RUSTFLAGS) --deny warnings" cargo build -p runtime-rs --target $(TRIPLE) $(if $(findstring release,$(BUILD_TYPE)),--release) $(EXTRA_RUSTFEATURES)
 
-$(GENERATED_FILES): %: %.in
+$(GENERATED_FILES): %: %.in Makefile
 	@sed \
         $(foreach r,$(GENERATED_REPLACEMENTS),-e 's|@$r@|$($r)|g') \
         $(foreach v,$(GENERATED_VARS),-e "s|@$v@|$($v)|g") \
