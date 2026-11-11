@@ -15,17 +15,13 @@ use slog::{info, o, warn, Drain, Logger};
 
 use crate::initdata::{locate_device, locate_unmeasured_device, read_initdata};
 use kata_types::initdata::InitData;
-use kata_types::unmeasured_initdata::{UnmeasuredInitData, UNMEASURED_INITDATA_CONFIG_KEY};
-use serde::Deserialize;
+use kata_types::unmeasured_initdata::{
+    UnmeasuredInitData, UnmeasuredInitDataConfig, UNMEASURED_INITDATA_CONFIG_KEY,
+};
 
 const DEV_DIR: &str = "/dev";
 const MEASURED_CFG_DIR: &str = "/run/measured-cfg";
 const UNMEASURED_CFG_DIR: &str = "/run/unmeasured-cfg";
-
-#[derive(Debug, Deserialize)]
-struct UnmeasuredInitDataConfig {
-    enabled: bool,
-}
 
 #[derive(Debug)]
 struct InitDataProcessor {
@@ -101,23 +97,20 @@ impl InitDataProcessor {
         }
 
         self.write_file(&initdata_file, raw_initdata)
-            .context(format!(
-                "Failed to write initdata file {:?}",
-                initdata_file
-            ))?;
+            .context(format!("Failed to write initdata file {:?}", initdata_file))?;
 
         let mut written_files = 1;
 
         // Write each configuration item.
         for (key, value) in data {
-            let file_path = config_path.join(key);
+            let file_path = initdata_dir.join(key);
             let Some(parent) = file_path.parent() else {
                 warn!(self.logger, "Skipping invalid key: {}", key);
                 continue;
             };
 
             // Security check: Ensure file path is within the directory.
-            let config_path = config_path.canonicalize()?;
+            let config_path = initdata_dir.canonicalize()?;
             let parent = parent.canonicalize()?;
             if !parent.starts_with(&config_path) {
                 warn!(self.logger, "Skipping potentially dangerous key: {}", key);
@@ -161,8 +154,11 @@ impl InitDataProcessor {
         info!(self.logger, "Starting initdata processing");
 
         self.process_measured_initdata()?;
-        if self.unmeasured_initdata_enabled()? {
-            self.process_unmeasured_initdata()?;
+        if let Some(config) = self
+            .unmeasured_initdata_config()?
+            .filter(|config| config.enabled)
+        {
+            self.process_unmeasured_initdata(&config)?;
         } else {
             info!(
                 self.logger,
@@ -210,14 +206,14 @@ impl InitDataProcessor {
         Ok(())
     }
 
-    fn unmeasured_initdata_enabled(&self) -> Result<bool> {
+    fn unmeasured_initdata_config(&self) -> Result<Option<UnmeasuredInitDataConfig>> {
         let config_path = self
             .config_path
             .join("initdata")
             .join(UNMEASURED_INITDATA_CONFIG_KEY);
         let config = match std::fs::read_to_string(&config_path) {
             Ok(config) => config,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => {
                 return Err(e).context(format!(
                     "read unmeasured initdata config from {:?}",
@@ -226,15 +222,17 @@ impl InitDataProcessor {
             }
         };
 
-        unmeasured_initdata_enabled(&config)
+        let config: UnmeasuredInitDataConfig =
+            toml::from_str(&config).context("parse unmeasured initdata config failed")?;
+        config
+            .validate()
+            .context("validate unmeasured initdata config failed")?;
+        Ok(Some(config))
     }
 
-    fn process_unmeasured_initdata(&self) -> Result<()> {
-        let initdata_device_opt = locate_unmeasured_device(&self.dev_path, &self.logger)?;
-        let initdata_device = match initdata_device_opt {
-            Some(device) => device,
-            None => return Ok(()),
-        };
+    fn process_unmeasured_initdata(&self, config: &UnmeasuredInitDataConfig) -> Result<()> {
+        let initdata_device = locate_unmeasured_device(&self.dev_path, &self.logger)?
+            .context("unmeasured initdata is enabled but its device was not found")?;
         info!(
             self.logger,
             "Reading unmeasured initdata from device: {:?}", initdata_device
@@ -255,6 +253,8 @@ impl InitDataProcessor {
             .validate()
             .context("structural unmeasured initdata validation failed")?;
 
+        config.validate_data(initdata.data())?;
+
         self.write_config_files(
             &self.unmeasured_config_path,
             &initdata_content,
@@ -263,13 +263,6 @@ impl InitDataProcessor {
 
         Ok(())
     }
-}
-
-fn unmeasured_initdata_enabled(config: &str) -> Result<bool> {
-    let config: UnmeasuredInitDataConfig =
-        toml::from_str(config).context("parse unmeasured initdata config failed")?;
-
-    Ok(config.enabled)
 }
 
 fn create_logger() -> Logger {
@@ -374,11 +367,112 @@ mod tests {
             "config"
         );
         assert!(!root.path().join("initdata/stale.toml").exists());
+        assert!(!root.path().join("aa.toml").exists());
     }
 
     #[test]
-    fn measured_config_controls_unmeasured_initdata() {
-        assert!(!unmeasured_initdata_enabled("enabled = false").unwrap());
-        assert!(unmeasured_initdata_enabled("enabled = true").unwrap());
+    fn unmeasured_initdata_processing_tests() {
+        for (policy, extra_key, succeeds) in [
+            // succeeds
+            ("enabled = true\nallowed_keys = ['aa.toml']", false, true),
+            ("enabled = false\nallowed_keys = []", true, true),
+            // fails
+            ("enabled = true\nallowed_keys = ['aa.toml']", true, false),
+            ("enabled = true", false, false),
+            ("enabled = true\nallowed_keys = []", false, false),
+            ("enabled = false\nallowed_keys = ['aa.toml']", true, false),
+            ("enabled = true\nallowed_keys = []", false, false),
+            (
+                "enabled = true\nallowed_keys = ['../aa.toml']",
+                false,
+                false,
+            ),
+            ("enabled = true", false, false),
+            ("enabled = false", false, false),
+            ("enabled = true\nallowed_keys = 'aa.toml'", false, false),
+            (
+                "enabled = true\nallowed_keys = ['aa.toml']\nextra = true",
+                false,
+                false,
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let dev = root.path().join("dev");
+            let measured = root.path().join("measured");
+            let output = root.path().join("unmeasured");
+            std::fs::create_dir_all(dev.join("disk/by-id")).unwrap();
+            std::fs::create_dir_all(measured.join("initdata")).unwrap();
+            std::fs::write(
+                measured
+                    .join("initdata")
+                    .join(UNMEASURED_INITDATA_CONFIG_KEY),
+                policy,
+            )
+            .unwrap();
+            let mut data = UnmeasuredInitData::new("0.1.0");
+            data.insert_data("aa.toml", "customer_id = 'example'");
+            if extra_key {
+                data.insert_data("cdh.toml", "untrusted");
+            }
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(&data.to_vec().unwrap()).unwrap();
+            let compressed = encoder.finish().unwrap();
+            let mut device = initdata::UNMEASURED_INITDATA_MAGIC_NUMBER.to_vec();
+            device.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
+            device.extend_from_slice(&compressed);
+            std::fs::write(dev.join("disk/by-id/virtio-unmeasured-initdata"), device).unwrap();
+            let processor = InitDataProcessor::new(Logger::root(slog::Discard, o!()))
+                .with_dev_path(dev)
+                .with_config_path(measured)
+                .with_unmeasured_config_path(&output);
+            let result = processor.process();
+            assert_eq!(result.is_ok(), succeeds, "{policy}: {result:?}");
+            if succeeds && !extra_key {
+                assert_eq!(
+                    std::fs::read_to_string(output.join("initdata/aa.toml")).unwrap(),
+                    "customer_id = 'example'"
+                );
+            } else {
+                assert!(
+                    !output.exists(),
+                    "rejected or disabled payload must write nothing"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_unmeasured_device_fails_only_when_enabled() {
+        for enabled in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let dev = root.path().join("dev");
+            let measured = root.path().join("measured");
+            let output = root.path().join("unmeasured");
+            std::fs::create_dir(&dev).unwrap();
+            std::fs::create_dir_all(measured.join("initdata")).unwrap();
+            let keys = if enabled { "['aa.toml']" } else { "[]" };
+            std::fs::write(
+                measured
+                    .join("initdata")
+                    .join(UNMEASURED_INITDATA_CONFIG_KEY),
+                format!("enabled = {}\nallowed_keys = {}", enabled, keys),
+            )
+            .unwrap();
+            let processor = InitDataProcessor::new(Logger::root(slog::Discard, o!()))
+                .with_dev_path(dev)
+                .with_config_path(measured)
+                .with_unmeasured_config_path(&output);
+            let result = processor.process();
+            if enabled {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("device was not found"));
+            } else {
+                result.unwrap();
+            }
+            assert!(!output.exists());
+        }
     }
 }

@@ -18,9 +18,60 @@ pub const UNMEASURED_INITDATA_CONFIG_KEY: &str = "unmeasured-initdata-cfg.toml";
 
 /// Trusted measured initdata wrapper controlling unmeasured initdata consumption.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UnmeasuredInitDataConfig {
     /// Whether the guest should consume unmeasured initdata.
     pub enabled: bool,
+    /// Exact file names to be accepted from unmeasured initdata. Cannot be empty when enabled.
+    pub allowed_keys: Vec<String>,
+}
+
+impl UnmeasuredInitDataConfig {
+    /// Validate the measured policy after deserialization.
+    pub fn validate(&self) -> Result<()> {
+        if self.enabled && self.allowed_keys.is_empty() {
+            return Err(anyhow!(
+                "allowed_keys must contain file names when unmeasured initdata is enabled"
+            ));
+        }
+        if !self.enabled && !self.allowed_keys.is_empty() {
+            return Err(anyhow!(
+                "allowed_keys must be empty when unmeasured initdata is disabled"
+            ));
+        }
+        for key in &self.allowed_keys {
+            Self::validate_key(key)?;
+        }
+        Ok(())
+    }
+
+    /// Reject untrusted entries outside the measured allowlist before writing files.
+    pub fn validate_data(&self, data: &HashMap<String, String>) -> Result<()> {
+        self.validate()?;
+        for key in data.keys() {
+            if !self.enabled || !self.allowed_keys.contains(key) {
+                return Err(anyhow!("unmeasured initdata key is not allowed: {}", key));
+            }
+            Self::validate_key(key)?;
+        }
+        Ok(())
+    }
+
+    fn validate_key(key: &str) -> Result<()> {
+        // Only plain file names are supported. Protect the processor's own output.
+        if key.is_empty()
+            || key.contains('/')
+            || key.contains('\0')
+            || key == "."
+            || key == ".."
+            || key == "initdata"
+            || key == "initdata.toml"
+            || key == UNMEASURED_INITDATA_CONFIG_KEY
+        {
+            return Err(anyhow!("invalid unmeasured initdata file name: {}", key));
+        }
+        Ok(())
+    }
 }
 
 /// Unmeasured initdata contains file-based configuration supplied by an untrusted host.
@@ -145,6 +196,9 @@ pub fn unmeasured_initdata_enabled(initdata_toml: &str) -> Result<bool> {
 
     let config: UnmeasuredInitDataConfig =
         toml::from_str(config).context("parse unmeasured initdata config")?;
+    config
+        .validate()
+        .context("validate unmeasured initdata config")?;
     Ok(config.enabled)
 }
 
@@ -162,11 +216,87 @@ mod tests {
     use super::*;
 
     #[test]
+    fn measured_policy_requires_known_fields_and_correct_types() {
+        for policy in [
+            "enabled = true",
+            "enabled = false",
+            "enabled = true\nallowed_keys = []",
+            "enabled = true\nallowed_keys = ['']",
+            "enabled = false\nallowed_keys = ['aa.toml']",
+            "allowed_keys = ['aa.toml']",
+            "enabled = true\nallowed_keys = 'aa.toml'",
+            "enabled = true\nallowed_keys = [1]",
+            "enabled = true\nallowed_keys = ['aa.toml']\nextra = true",
+            "enabled = 'true'\nallowed_keys = ['aa.toml']",
+        ] {
+            assert!(
+                toml::from_str::<UnmeasuredInitDataConfig>(policy)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|config| config.validate())
+                    .is_err(),
+                "{}",
+                policy
+            );
+        }
+        for policy in [
+            "enabled = true\nallowed_keys = ['aa.toml']",
+            "enabled = false\nallowed_keys = []",
+        ] {
+            assert!(
+                toml::from_str::<UnmeasuredInitDataConfig>(policy)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|config| config.validate())
+                    .is_ok(),
+                "{}",
+                policy
+            );
+        }
+    }
+
+    #[test]
+    fn measured_allowlist_rejects_unlisted_and_unsafe_entries() {
+        let config: UnmeasuredInitDataConfig =
+            toml::from_str("enabled = true\nallowed_keys = ['aa.toml']").unwrap();
+        let mut data = HashMap::from([("aa.toml".to_string(), "config".to_string())]);
+        assert!(config.validate_data(&data).is_ok());
+        data.insert("cdh.toml".to_string(), "untrusted".to_string());
+        assert!(config.validate_data(&data).is_err());
+        for policy in [
+            "enabled = true\nallowed_keys = []",
+            "enabled = false\nallowed_keys = ['aa.toml']",
+        ] {
+            assert!(toml::from_str::<UnmeasuredInitDataConfig>(policy)
+                .map_err(anyhow::Error::from)
+                .and_then(|config| config.validate())
+                .is_err());
+        }
+        for key in [
+            "",
+            ".",
+            "..",
+            "../aa.toml",
+            "/aa.toml",
+            "nested/aa.toml",
+            "initdata",
+            "initdata.toml",
+            UNMEASURED_INITDATA_CONFIG_KEY,
+        ] {
+            let config = UnmeasuredInitDataConfig {
+                enabled: true,
+                allowed_keys: vec![key.into()],
+            };
+            assert!(config
+                .validate_data(&HashMap::from([(key.into(), "".into())]))
+                .is_err());
+        }
+    }
+
+    #[test]
     fn parse_unmeasured_initdata_files() {
         let input = r#"version = "0.1.0"
 
 [data]
-"aa.toml" = '''customer_id = "customer-a"'''
+"aa.toml" = '''ccm_appconfig_id = "customer-a"'''
 "cdh.toml" = '''region = "us-east-1"'''
 "#;
 
@@ -175,7 +305,7 @@ mod tests {
         assert_eq!(initdata.data().len(), 2);
         assert_eq!(
             initdata.get_coco_data("aa.toml").unwrap(),
-            "customer_id = \"customer-a\""
+            "ccm_appconfig_id = \"customer-a\""
         );
     }
 
@@ -250,13 +380,26 @@ algorithm = "sha256"
 [data]
 "{}" = '''
 enabled = true
+allowed_keys = ["aa.toml"]
 '''
 "#,
             UNMEASURED_INITDATA_CONFIG_KEY
         );
         assert!(unmeasured_initdata_enabled(&enabled).unwrap());
+        for invalid in [
+            enabled.replace("allowed_keys = [\"aa.toml\"]", "allowed_keys = []"),
+            enabled.replace(
+                "allowed_keys = [\"aa.toml\"]",
+                "allowed_keys = ['../aa.toml']",
+            ),
+            enabled.replace("enabled = true", "enabled = false"),
+        ] {
+            assert!(unmeasured_initdata_enabled(&invalid).is_err());
+        }
 
-        let disabled = enabled.replace("enabled = true", "enabled = false");
+        let disabled = enabled
+            .replace("enabled = true", "enabled = false")
+            .replace("allowed_keys = [\"aa.toml\"]", "allowed_keys = []");
         assert!(!unmeasured_initdata_enabled(&disabled).unwrap());
 
         let missing = r#"version = "0.1.0"

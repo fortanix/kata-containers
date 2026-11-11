@@ -123,11 +123,24 @@ algorithm = "sha256"
 [data]
 "unmeasured-initdata-cfg.toml" = '''
 enabled = true
+allowed_keys = ["aa.toml"]
 '''
 ```
 
 If this file is absent, or if `enabled` is `false`, the processor ignores the
-unmeasured initdata device.
+unmeasured initdata device. `allowed_keys` is an exact, case-sensitive allowlist
+controlled by measured initdata. The `allowed_keys` field is required and must
+contain at least one valid file name when `enabled = true`. When disabled, use
+`enabled = false` with `allowed_keys = []`. Unknown fields, incorrect field types,
+and invalid file names are rejected when the measured policy is parsed, even
+if no unmeasured device is present.
+An enabled payload containing any unlisted key is rejected before any unmeasured
+files (including the raw document) are written. Keys must be plain file names;
+paths and processor-reserved names are rejected even if listed. Existing measured
+configurations must add `allowed_keys` to continue accepting unmeasured entries.
+
+When `enabled = true`, the unmeasured initdata device is required. If it is
+missing, the processor returns an error before writing unmeasured files.
 
 Example unmeasured initdata:
 
@@ -138,17 +151,14 @@ version = "0.1.0"
 "aa.toml" = '''
 customer_id = "example"
 '''
-
-"cdh.toml" = '''
-region = "us-east-1"
-'''
 ```
 
-The processor writes those entries as files:
+The processor writes extracted entries beneath `initdata/`. The complete raw
+document remains at the output root as `initdata.toml`:
 
 ```text
-/run/unmeasured-cfg/aa.toml
-/run/unmeasured-cfg/cdh.toml
+/run/unmeasured-cfg/initdata.toml
+/run/unmeasured-cfg/initdata/aa.toml
 ```
 
 The Kata agent launches guest components with unmeasured and measured AA/CDH config files. In the absence of unmeasured config files, only the measured initdata configuration is loaded inside the guest.
