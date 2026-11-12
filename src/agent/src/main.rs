@@ -525,14 +525,6 @@ fn build_substitution_ctx(
             String::new()
         },
     );
-    ctx.insert(
-        "unmeasured_cdh_config_path".to_string(),
-        if unmeasured_initdata_enabled {
-            initdata::UNMEASURED_CDH_CONFIG_PATH.to_string()
-        } else {
-            String::new()
-        },
-    );
     ctx.insert("cdh_socket".to_string(), CDH_SOCKET.to_string());
     ctx.insert(
         "ocicrypt_config_path".to_string(),
@@ -617,12 +609,10 @@ fn builtin_coco_plan(
     }
 
     if max_level >= 2 {
-        let mut args = vec![];
-        append_unmeasured_config_arg(&mut args, initdata::UNMEASURED_CDH_CONFIG_PATH);
         plan.push(guest_extension_image::LaunchSpec {
             id: "confidential-data-hub".to_string(),
             path: Path::new(CDH_PATH).to_path_buf(),
-            args,
+            args: vec![],
             config: Some(CDH_CONFIG_PATH.to_string()),
             env: vec![(
                 "OCICRYPT_KEYPROVIDER_CONFIG".to_string(),

@@ -161,7 +161,8 @@ document remains at the output root as `initdata.toml`:
 /run/unmeasured-cfg/initdata/aa.toml
 ```
 
-The Kata agent launches guest components with unmeasured and measured AA/CDH config files. In the absence of unmeasured config files, only the measured initdata configuration is loaded inside the guest.
+The Kata agent launches AA with measured configuration and an optional extracted
+unmeasured `aa.toml`. CDH receives its measured configuration.
 
 ## Systemd Service Management
 
