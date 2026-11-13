@@ -79,7 +79,8 @@ use persist::{self, sandbox_persist::Persist};
 use pod_resources_rs::handle_cdi_devices;
 use protobuf::SpecialFields;
 use resource::coco_data::initdata::{
-    kata_shared_init_data_path, InitDataConfig, KATA_INIT_DATA_IMAGE,
+    kata_shared_init_data_path, prepare_unmeasured_initdata, InitDataConfig, KATA_INIT_DATA_IMAGE,
+    KATA_UNMEASURED_INIT_DATA_IMAGE,
 };
 use resource::coco_data::initdata_block;
 use resource::manager::ManagerArgs;
@@ -550,6 +551,22 @@ impl VirtSandbox {
         } else {
             None
         };
+
+        // Remote hypervisors receive the payload in CreateVM annotations and
+        // prepare their initialization devices on the remote host.
+        if self.resource_manager.config().await.runtime.hypervisor_name != HYPERVISOR_REMOTE {
+            let unmeasured_image_path = Path::new(&kata_shared_init_data_path())
+                .join(&self.sid)
+                .join(KATA_UNMEASURED_INIT_DATA_IMAGE);
+            if let Some(block_config) = prepare_unmeasured_initdata(
+                &self.hypervisor.hypervisor_config().await,
+                &unmeasured_image_path,
+            )
+            .context("failed to prepare unmeasured initdata device config")?
+            {
+                resource_configs.push(ResourceConfig::UnmeasuredInitData(block_config));
+            }
+        }
 
         // Cold-plug VFIO devices using two mutually exclusive paths:
         // 1. CDI path: Query Kubernetes Pod Resources API for devices managed by device plugins

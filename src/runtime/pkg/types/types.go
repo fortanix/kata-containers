@@ -16,3 +16,8 @@ type Initdata struct {
 	Algorithm string            `toml:"algorithm"`
 	Data      map[string]string `toml:"data"`
 }
+
+type UnmeasuredInitdata struct {
+	Version string            `toml:"version"`
+	Data    map[string]string `toml:"data"`
+}

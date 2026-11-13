@@ -27,6 +27,79 @@ mod tests {
     use std::fs;
     use std::path::Path;
     #[test]
+    fn test_unmeasured_initdata_annotations() {
+        QemuConfig::new().register();
+        use kata_types::annotations::{
+            KATA_ANNO_CFG_HYPERVISOR_INIT_DATA, KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA,
+        };
+        use kata_types::initdata::{encode_initdata, InitData};
+        use kata_types::unmeasured_initdata::{encode_unmeasured_initdata, UnmeasuredInitData};
+
+        let content = include_str!("texture/configuration-anno-0.toml");
+        let mut measured = InitData::new("sha256", "0.1.0");
+        measured.insert_data("unmeasured-initdata-cfg.toml", "enabled = true");
+        let unmeasured = UnmeasuredInitData::new("0.1.0");
+        let encoded = encode_unmeasured_initdata(&unmeasured);
+
+        for from_annotation in [false, true] {
+            let mut config = TomlConfig::load(content).unwrap();
+            let hv = config.hypervisor.get_mut("qemu").unwrap();
+            hv.security_info.enable_annotations =
+                vec!["cc_init_data".into(), "cc_unmeasured_init_data".into()];
+            let mut annotations = HashMap::from([(
+                KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA.to_string(),
+                encoded.clone(),
+            )]);
+            if from_annotation {
+                annotations.insert(
+                    KATA_ANNO_CFG_HYPERVISOR_INIT_DATA.to_string(),
+                    encode_initdata(&measured),
+                );
+            } else {
+                hv.security_info.initdata = measured.to_string().unwrap();
+            }
+            Annotation::new(annotations.clone())
+                .update_config_by_annotation(&mut config)
+                .unwrap();
+            assert!(!config.hypervisor["qemu"]
+                .security_info
+                .unmeasured_initdata
+                .is_empty());
+
+            annotations.insert(
+                KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA.to_string(),
+                "invalid-base64".into(),
+            );
+            assert!(Annotation::new(annotations)
+                .update_config_by_annotation(&mut config)
+                .is_err());
+        }
+
+        for (allowed, enabled) in [(false, true), (true, false)] {
+            let mut config = TomlConfig::load(content).unwrap();
+            let hv = config.hypervisor.get_mut("qemu").unwrap();
+            hv.security_info.enable_annotations = if allowed {
+                vec!["cc_unmeasured_init_data".into()]
+            } else {
+                vec![]
+            };
+            if enabled {
+                hv.security_info.initdata = measured.to_string().unwrap();
+            }
+            // Both the annotation allowlist and the measured opt-in are required.
+            let annotation = Annotation::new(HashMap::from([(
+                KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA.to_string(),
+                encoded.clone(),
+            )]));
+            annotation.update_config_by_annotation(&mut config).unwrap();
+            assert!(config.hypervisor["qemu"]
+                .security_info
+                .unmeasured_initdata
+                .is_empty());
+        }
+    }
+
+    #[test]
     fn test_change_config_annotation() {
         let content = include_str!("texture/configuration-anno-0.toml");
         let qemu = QemuConfig::new();

@@ -48,6 +48,7 @@ impl From<io::Error> for InitDataError {
 }
 
 const MAGIC_HEADER: &[u8; 8] = b"initdata";
+const UNMEASURED_MAGIC_HEADER: &[u8; 8] = b"unmsrdat";
 const SECTOR_SIZE: u64 = 512;
 
 // Default buffer size, adjustable based on target storage optimization
@@ -84,6 +85,7 @@ fn create_compressed_block(
     initdata: &str,
     image_path: &Path,
     compression_level: Option<u32>,
+    magic_header: &[u8; 8],
 ) -> Result<u64, InitDataError> {
     // 1. Skip file creation if initdata is empty
     if initdata.is_empty() {
@@ -156,8 +158,8 @@ fn create_compressed_block(
     let mut writer = BufWriter::with_capacity(buffer_size, temp_file);
 
     // 6. Write magic header
-    writer.write_all(MAGIC_HEADER)?;
-    info!(sl!(), "Magic header written: {:?}", MAGIC_HEADER);
+    writer.write_all(magic_header)?;
+    info!(sl!(), "Magic header written: {:?}", magic_header);
 
     // 7. First compress data to get the actual compressed size
     let compression =
@@ -207,7 +209,7 @@ fn create_compressed_block(
     info!(sl!(), "Compressed data written");
 
     // 10. Calculate padding for sector alignment
-    let current_pos = MAGIC_HEADER.len() as u64 + 8 + compressed_size; // magic + length + data
+    let current_pos = magic_header.len() as u64 + 8 + compressed_size; // magic + length + data
     let padding = (SECTOR_SIZE - (current_pos % SECTOR_SIZE)) % SECTOR_SIZE;
 
     // 11. Zero-byte padding using small blocks
@@ -259,8 +261,17 @@ fn create_compressed_block(
 
 /// Add data to a compressed image at the specified path
 pub fn push_data(initdata_path: &Path, data: &str) -> anyhow::Result<()> {
+    push_data_with_magic(initdata_path, data, MAGIC_HEADER)
+}
+
+/// Write unmeasured initdata using the guest processor's distinct magic header.
+pub fn push_unmeasured_data(initdata_path: &Path, data: &str) -> anyhow::Result<()> {
+    push_data_with_magic(initdata_path, data, UNMEASURED_MAGIC_HEADER)
+}
+
+fn push_data_with_magic(initdata_path: &Path, data: &str, magic: &[u8; 8]) -> anyhow::Result<()> {
     let _ = fs::remove_file(initdata_path);
-    let size = create_compressed_block(data, initdata_path, None)
+    let size = create_compressed_block(data, initdata_path, None, magic)
         .map_err(|e| anyhow::anyhow!("Failed to create image: {}", e))?;
     info!(
         sl!(),
@@ -276,7 +287,7 @@ pub fn push_data(initdata_path: &Path, data: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
+    use std::{convert::TryInto, io::Read};
 
     #[test]
     fn test_valid_creation() {
@@ -284,7 +295,7 @@ mod tests {
         let path = dir.path().join("test.img");
 
         let data = "[config]\nkey = \"value\"\n";
-        let result = create_compressed_block(data, &path, Some(6));
+        let result = create_compressed_block(data, &path, Some(6), MAGIC_HEADER);
 
         assert!(result.is_ok());
         assert!(path.exists());
@@ -304,11 +315,33 @@ mod tests {
     }
 
     #[test]
+    fn test_unmeasured_image_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("unmeasured.img");
+        let data = "version = \"0.1.0\"\n[data]\n\"aa.toml\" = \"example\"\n";
+        push_unmeasured_data(&path, data).unwrap();
+        let image = fs::read(&path).unwrap();
+        assert_eq!(&image[..8], b"unmsrdat");
+        assert_eq!(image.len() % SECTOR_SIZE as usize, 0);
+        let size = u64::from_le_bytes(image[8..16].try_into().unwrap()) as usize;
+        let mut decoded = String::new();
+        flate2::read::GzDecoder::new(&image[16..16 + size])
+            .read_to_string(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, data);
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
     fn test_empty_input() {
         let dir = tempfile::tempdir().expect("crating temp dir failed");
         let path = dir.path().join("empty.img");
 
-        let result = create_compressed_block("", &path, None);
+        let result = create_compressed_block("", &path, None, MAGIC_HEADER);
 
         // Should succeed but return zero size
         assert!(result.is_ok());
@@ -326,7 +359,7 @@ mod tests {
             .into_iter()
             .map(|level| {
                 let path = dir.path().join(format!("test_comp_{}.img", level));
-                let res = create_compressed_block(&data, &path, Some(level));
+                let res = create_compressed_block(&data, &path, Some(level), MAGIC_HEADER);
                 let size = res.unwrap();
                 fs::remove_file(&path).unwrap();
                 size

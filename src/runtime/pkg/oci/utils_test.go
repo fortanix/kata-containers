@@ -6,6 +6,9 @@
 package oci
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path"
@@ -50,6 +53,108 @@ func createConfig(fileName string, fileData string) (string, error) {
 	}
 
 	return configPath, nil
+}
+
+func encodeGzipBase64(t *testing.T, input string) string {
+	t.Helper()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(compressed.Bytes())
+}
+
+func measuredInitdataWithUnmeasuredGate(enabled bool) string {
+	return fmt.Sprintf(`version = "0.1.0"
+algorithm = "sha256"
+[data]
+"unmeasured-initdata-cfg.toml" = '''
+enabled = %t
+'''
+`, enabled)
+}
+
+func TestAddHypervisorUnmeasuredInitdataOverrides(t *testing.T) {
+	valid := `version = "0.1.0"
+	[data]
+	"aa.toml" = '''
+	customer_id = "customer-a"
+'''
+"cdh.toml" = '''
+region = "us-east-1"
+'''
+`
+
+	for _, annotations := range []map[string]string{
+		nil,
+		{vcAnnotations.UnmeasuredInitdata: ""},
+	} {
+		config := vc.SandboxConfig{}
+		err := addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: annotations}, &config)
+		assert.NoError(t, err)
+		assert.Empty(t, config.HypervisorConfig.UnmeasuredInitdata)
+	}
+
+	digest := []byte("measured digest")
+	config := vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{
+		Initdata:       measuredInitdataWithUnmeasuredGate(true),
+		InitdataDigest: digest,
+	}}
+	err := addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: map[string]string{
+		vcAnnotations.UnmeasuredInitdata: encodeGzipBase64(t, valid),
+	}}, &config)
+	assert.NoError(t, err)
+	assert.Equal(t, valid, config.HypervisorConfig.UnmeasuredInitdata)
+	assert.Equal(t, digest, config.HypervisorConfig.InitdataDigest)
+
+	config = vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{
+		Initdata: measuredInitdataWithUnmeasuredGate(false),
+	}}
+	err = addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: map[string]string{
+		vcAnnotations.UnmeasuredInitdata: encodeGzipBase64(t, valid),
+	}}, &config)
+	assert.NoError(t, err)
+	assert.Empty(t, config.HypervisorConfig.UnmeasuredInitdata)
+}
+
+func TestAddHypervisorUnmeasuredInitdataOverridesRejectsInvalidInput(t *testing.T) {
+	tests := map[string]string{
+		"invalid encoding": "not-base64",
+		"invalid toml":     encodeGzipBase64(t, "not toml"),
+	}
+
+	for name, value := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{
+				Initdata: measuredInitdataWithUnmeasuredGate(true),
+			}}
+			err := addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: map[string]string{
+				vcAnnotations.UnmeasuredInitdata: value,
+			}}, &config)
+			assert.Error(t, err)
+			assert.Empty(t, config.HypervisorConfig.UnmeasuredInitdata)
+		})
+	}
+}
+
+func TestUnmeasuredInitdataAnnotationAllowlist(t *testing.T) {
+	input := "version = '0.1.0'\n[data]\n"
+	measured := measuredInitdataWithUnmeasuredGate(true)
+	spec := specs.Spec{Annotations: map[string]string{
+		vcAnnotations.Initdata:           encodeGzipBase64(t, measured),
+		vcAnnotations.UnmeasuredInitdata: encodeGzipBase64(t, input),
+	}}
+	config := vc.SandboxConfig{}
+	runtimeConfig := RuntimeConfig{HypervisorConfig: vc.HypervisorConfig{
+		EnableAnnotations: []string{"cc_init_data", "cc_unmeasured_init_data"},
+	}}
+
+	assert.NoError(t, addAnnotations(spec, &config, runtimeConfig))
+	assert.Equal(t, input, config.HypervisorConfig.UnmeasuredInitdata)
 }
 
 func TestMinimalSandboxConfig(t *testing.T) {

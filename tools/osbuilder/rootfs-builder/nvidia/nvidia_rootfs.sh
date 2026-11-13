@@ -522,6 +522,11 @@ chisseled_init() {
 	setup_nvrc_init_symlinks
 
 	cp -a "${stage_one}"/usr/bin/kata-agent   usr/bin/.
+	# NVRC is the init (no systemd), so the processor's unit never runs; kata-agent runs this
+	# binary itself before it launches the guest components (see src/agent/src/initdata.rs).
+	if [[ -e "${stage_one}"/usr/bin/initdata-processor ]]; then
+		cp -a "${stage_one}"/usr/bin/initdata-processor usr/bin/.
+	fi
 	if [[ "${AGENT_POLICY}" == "yes" ]]; then
 		cp -a "${stage_one}"/etc/kata-opa etc/.
 	fi

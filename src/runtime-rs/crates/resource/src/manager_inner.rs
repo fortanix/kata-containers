@@ -80,6 +80,7 @@ struct ResourceCleanupSteps {
     share_fs_mount: bool,
     swap: bool,
     ephemeral_disks: bool,
+    initdata: bool,
 }
 
 impl ResourceManagerInner {
@@ -233,7 +234,7 @@ impl ResourceManagerInner {
                     .await
                     .context("do handle port device failed.")?;
                 }
-                ResourceConfig::InitData(id) => {
+                ResourceConfig::InitData(id) | ResourceConfig::UnmeasuredInitData(id) => {
                     do_handle_device(&self.device_manager, &DeviceConfig::BlockCfgModern(id))
                         .await
                         .context("do handle initdata block device failed.")?;
@@ -1109,6 +1110,13 @@ impl ResourceManagerInner {
                 .context("cleanup ephemeral disks")
             {
                 Ok(()) => steps.ephemeral_disks = true,
+                Err(e) => errors.push(e),
+            }
+        }
+
+        if !steps.initdata {
+            match crate::coco_data::initdata::cleanup_initdata(&self.sid) {
+                Ok(()) => steps.initdata = true,
                 Err(e) => errors.push(e),
             }
         }

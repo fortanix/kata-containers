@@ -16,6 +16,9 @@ use crate::config::hypervisor::{get_hypervisor_plugin, HugePageType};
 use crate::config::TomlConfig;
 use crate::initdata::add_hypervisor_initdata_overrides;
 use crate::sl;
+use crate::unmeasured_initdata::{
+    add_hypervisor_unmeasured_initdata_overrides, unmeasured_initdata_enabled,
+};
 
 use self::cri_containerd::{SANDBOX_CPU_PERIOD_KEY, SANDBOX_CPU_QUOTA_KEY, SANDBOX_MEM_KEY};
 
@@ -270,6 +273,9 @@ pub const KATA_ANNO_CFG_HYPERVISOR_VIRTIO_FS_EXTRA_ARGS: &str =
 /// The initdata annotation passed in when CVM launchs
 pub const KATA_ANNO_CFG_HYPERVISOR_INIT_DATA: &str =
     "io.katacontainers.config.hypervisor.cc_init_data";
+/// The unmeasured initdata annotation passed in when CVM launches
+pub const KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA: &str =
+    "io.katacontainers.config.hypervisor.cc_unmeasured_init_data";
 
 /// GPU specific annotations for remote hypervisor to help with instance selection
 /// It's for minimum number of GPUs required for the VM.
@@ -919,8 +925,34 @@ impl Annotation {
                         hv.security_info.guest_hook_path = value.to_string();
                     }
                     KATA_ANNO_CFG_HYPERVISOR_INIT_DATA => {
-                        hv.security_info.initdata =
-                            add_hypervisor_initdata_overrides(value).unwrap();
+                        hv.security_info.initdata = add_hypervisor_initdata_overrides(value)
+                            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                    }
+                    KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA => {
+                        // Read the measured annotation directly: annotation iteration order
+                        // must not affect the trusted gate. Otherwise use measured TOML
+                        // already supplied through the runtime configuration.
+                        let initdata = if hv
+                            .security_info
+                            .is_annotation_enabled(KATA_ANNO_CFG_HYPERVISOR_INIT_DATA)
+                        {
+                            self.annotations
+                                .get(KATA_ANNO_CFG_HYPERVISOR_INIT_DATA)
+                                .map(|value| add_hypervisor_initdata_overrides(value))
+                                .transpose()
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
+                        } else {
+                            None
+                        };
+                        let initdata = initdata.as_deref().unwrap_or(&hv.security_info.initdata);
+                        if unmeasured_initdata_enabled(initdata)
+                            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
+                        {
+                            hv.security_info.unmeasured_initdata =
+                                add_hypervisor_unmeasured_initdata_overrides(value).map_err(
+                                    |err| io::Error::new(io::ErrorKind::InvalidData, err),
+                                )?;
+                        }
                     }
                     KATA_ANNO_CFG_HYPERVISOR_DEFAULT_GPUS => match self.get_value::<u32>(key) {
                         Ok(r) => {

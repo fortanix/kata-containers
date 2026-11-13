@@ -8,6 +8,8 @@
 Description=Kata Containers Agent
 Documentation=https://github.com/kata-containers/kata-containers
 Wants=kata-containers.target
+Requires=initdata-processor.service
+After=initdata-processor.service
 
 [Service]
 # Send agent output to tty to allow capture debug logs

@@ -273,7 +273,7 @@ externals:
       url: "https://github.com/NVIDIA/nvidia-container-toolkit"
     dcgm:
       desc: "NVIDIA Data Center GPU Manager"
-      version: "1:4.7.0-1"
+      version: "1:4.7.1-2"
       url: "https://github.com/NVIDIA/DCGM"
       exporter:
         desc: "NVIDIA DCGM exporter, released independently of DCGM itself"
