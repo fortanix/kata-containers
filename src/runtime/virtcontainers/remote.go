@@ -81,6 +81,7 @@ func (rh *remoteHypervisor) CreateVM(ctx context.Context, id string, network Net
 	annotations[hypannotations.DefaultVCPUs] = strconv.FormatUint(uint64(hypervisorConfig.NumVCPUs()), 10)
 	annotations[hypannotations.DefaultMemory] = strconv.FormatUint(uint64(hypervisorConfig.MemorySize), 10)
 	annotations[hypannotations.Initdata] = hypervisorConfig.Initdata
+	annotations[hypannotations.UnmeasuredInitdata] = hypervisorConfig.UnmeasuredInitdata
 	annotations[hypannotations.DefaultGPUs] = strconv.FormatUint(uint64(hypervisorConfig.DefaultGPUs), 10)
 	annotations[hypannotations.DefaultGPUModel] = hypervisorConfig.DefaultGPUModel
 
