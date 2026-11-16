@@ -98,6 +98,7 @@ mod tests {
         cleanup_initdata_dir(&sandbox).unwrap();
         assert!(!sandbox.exists());
         assert!(other.exists());
+        // Cleanup is idempotent: removing an already absent sandbox directory succeeds.
         cleanup_initdata_dir(&sandbox).unwrap();
     }
 

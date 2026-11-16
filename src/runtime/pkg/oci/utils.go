@@ -1152,13 +1152,48 @@ func addHypervisorInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConf
 const unmeasuredInitdataConfigKey = "unmeasured-initdata-cfg.toml"
 
 type unmeasuredInitdataConfig struct {
-	Enabled bool `toml:"enabled"`
+	Enabled     bool     `toml:"enabled"`
+	AllowedKeys []string `toml:"allowed_keys"`
+}
+
+func (config unmeasuredInitdataConfig) validate() error {
+	if config.Enabled && len(config.AllowedKeys) == 0 {
+		return errors.New("allowed_keys must contain file names when unmeasured initdata is enabled")
+	}
+	if !config.Enabled && len(config.AllowedKeys) != 0 {
+		return errors.New("allowed_keys must be empty when unmeasured initdata is disabled")
+	}
+	for _, key := range config.AllowedKeys {
+		switch key {
+		case "", ".", "..", "initdata", "initdata.toml", unmeasuredInitdataConfigKey:
+			return fmt.Errorf("invalid unmeasured initdata file name: %q", key)
+		}
+		if strings.ContainsRune(key, 0) || strings.Contains(key, "/") {
+			return fmt.Errorf("invalid unmeasured initdata file name: %q", key)
+		}
+	}
+	return nil
 }
 
 func unmeasuredInitdataEnabled(initdata string) (bool, error) {
+	if initdata == "" {
+		return false, nil
+	}
 	var data kataTypes.Initdata
-	if _, err := toml.Decode(initdata, &data); err != nil {
+	metadata, err := toml.Decode(initdata, &data)
+	if err != nil {
 		return false, fmt.Errorf("parsing initdata failed: %w", err)
+	}
+	if data.Version != "0.1.0" {
+		return false, fmt.Errorf("unsupported initdata version: %q", data.Version)
+	}
+	switch data.Algorithm {
+	case "sha256", "sha384", "sha512":
+	default:
+		return false, fmt.Errorf("unsupported initdata algorithm: %q", data.Algorithm)
+	}
+	if !metadata.IsDefined("data") {
+		return false, errors.New("initdata is missing data")
 	}
 
 	configContent, ok := data.Data[unmeasuredInitdataConfigKey]
@@ -1167,8 +1202,20 @@ func unmeasuredInitdataEnabled(initdata string) (bool, error) {
 	}
 
 	var config unmeasuredInitdataConfig
-	if _, err := toml.Decode(configContent, &config); err != nil {
+	metadata, err = toml.Decode(configContent, &config)
+	if err != nil {
 		return false, fmt.Errorf("parsing unmeasured initdata config failed: %w", err)
+	}
+	if !metadata.IsDefined("enabled") || !metadata.IsDefined("allowed_keys") {
+		return false, errors.New("unmeasured initdata config requires enabled and allowed_keys")
+	}
+	for _, key := range metadata.Keys() {
+		if len(key) != 1 || (key[0] != "enabled" && key[0] != "allowed_keys") {
+			return false, fmt.Errorf("unknown unmeasured initdata config field: %s", key)
+		}
+	}
+	if err := config.validate(); err != nil {
+		return false, fmt.Errorf("validating unmeasured initdata config failed: %w", err)
 	}
 
 	return config.Enabled, nil
@@ -1176,7 +1223,7 @@ func unmeasuredInitdataEnabled(initdata string) (bool, error) {
 
 func addHypervisorUnmeasuredInitdataOverrides(ocispec specs.Spec, sbConfig *vc.SandboxConfig) error {
 	value, ok := ocispec.Annotations[vcAnnotations.UnmeasuredInitdata]
-	if !ok || len(value) == 0 {
+	if !ok {
 		return nil
 	}
 
@@ -1189,6 +1236,9 @@ func addHypervisorUnmeasuredInitdataOverrides(ocispec specs.Spec, sbConfig *vc.S
 		return nil
 	}
 
+	if value == "" {
+		return nil
+	}
 	b64Reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(value))
 	gzipReader, err := gzip.NewReader(b64Reader)
 	if err != nil {
@@ -1202,9 +1252,16 @@ func addHypervisorUnmeasuredInitdataOverrides(ocispec specs.Spec, sbConfig *vc.S
 	}
 
 	var initdata kataTypes.UnmeasuredInitdata
-	_, err = toml.Decode(string(content), &initdata)
+	metadata, err := toml.Decode(string(content), &initdata)
 	if err != nil {
 		return fmt.Errorf("parsing unmeasured initdata annotation failed: %w", err)
+	}
+
+	if initdata.Version != "0.1.0" {
+		return fmt.Errorf("unsupported unmeasured initdata version: %q", initdata.Version)
+	}
+	if !metadata.IsDefined("data") {
+		return errors.New("unmeasured initdata is missing data")
 	}
 
 	sbConfig.HypervisorConfig.UnmeasuredInitdata = string(content)

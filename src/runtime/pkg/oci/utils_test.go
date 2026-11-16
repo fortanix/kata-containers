@@ -69,13 +69,95 @@ func encodeGzipBase64(t *testing.T, input string) string {
 }
 
 func measuredInitdataWithUnmeasuredGate(enabled bool) string {
+	allowedKeys := "[]"
+	if enabled {
+		allowedKeys = `["aa.toml", "cdh.toml"]`
+	}
 	return fmt.Sprintf(`version = "0.1.0"
 algorithm = "sha256"
 [data]
 "unmeasured-initdata-cfg.toml" = '''
 enabled = %t
+allowed_keys = %s
 '''
-`, enabled)
+`, enabled, allowedKeys)
+}
+
+func TestUnmeasuredInitdataPolicyMatchesRuntimeRS(t *testing.T) {
+	type policyCase struct {
+		name    string
+		policy  string
+		enabled bool
+		wantErr bool
+	}
+	cases := []policyCase{
+		{"enabled", "enabled = true\nallowed_keys = ['aa.toml']", true, false},
+		{"disabled", "enabled = false\nallowed_keys = []", false, false},
+		{"filename with zero and x", "enabled = true\nallowed_keys = ['config-v0x.toml']", true, false},
+		{"unknown case alias", "enabled = true\nallowed_keys = ['aa.toml']\nEnabled = false", false, true},
+		{"NUL filename", "enabled = true\nallowed_keys = [\"aa\\u0000.toml\"]", false, true},
+		{"missing keys", "enabled = true", false, true},
+		{"disabled missing keys", "enabled = false", false, true},
+		{"missing enabled", "allowed_keys = ['aa.toml']", false, true},
+		{"empty enabled list", "enabled = true\nallowed_keys = []", false, true},
+		{"disabled with keys", "enabled = false\nallowed_keys = ['aa.toml']", false, true},
+		{"unknown field", "enabled = true\nallowed_keys = ['aa.toml']\nextra = true", false, true},
+		{"wrong list type", "enabled = true\nallowed_keys = 'aa.toml'", false, true},
+		{"wrong entry type", "enabled = true\nallowed_keys = [1]", false, true},
+		{"wrong enabled type", "enabled = 'true'\nallowed_keys = ['aa.toml']", false, true},
+	}
+	for _, key := range []string{"", ".", "..", "initdata", "initdata.toml", unmeasuredInitdataConfigKey, "../aa.toml", "/aa.toml", "nested/aa.toml", "aa\x00.toml"} {
+		cases = append(cases, policyCase{"invalid key " + key, fmt.Sprintf("enabled = true\nallowed_keys = [%q]", key), false, true})
+	}
+	payload := encodeGzipBase64(t, "version = '0.1.0'\n[data]\n'aa.toml' = ''\n")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			measured := measuredInitdataWithUnmeasuredGate(false)
+			measured = strings.Replace(measured, "enabled = false\nallowed_keys = []", tc.policy, 1)
+			enabled, err := unmeasuredInitdataEnabled(measured)
+			assert.Equal(t, tc.wantErr, err != nil)
+			assert.Equal(t, tc.enabled, enabled)
+			for _, annotation := range []string{payload, ""} {
+				config := vc.SandboxConfig{HypervisorConfig: vc.HypervisorConfig{Initdata: measured}}
+				err := addHypervisorUnmeasuredInitdataOverrides(specs.Spec{Annotations: map[string]string{
+					vcAnnotations.UnmeasuredInitdata: annotation,
+				}}, &config)
+				assert.Equal(t, tc.wantErr, err != nil)
+				if tc.wantErr || !tc.enabled || annotation == "" {
+					assert.Empty(t, config.HypervisorConfig.UnmeasuredInitdata)
+				} else {
+					assert.NotEmpty(t, config.HypervisorConfig.UnmeasuredInitdata)
+				}
+			}
+		})
+	}
+}
+
+func TestUnmeasuredInitdataMeasuredDocumentMatchesRuntimeRS(t *testing.T) {
+	valid := measuredInitdataWithUnmeasuredGate(true)
+	for _, measured := range []string{
+		strings.Replace(valid, "version = \"0.1.0\"", "version = '0.2.0'", 1),
+		strings.Replace(valid, "version = \"0.1.0\"", "", 1),
+		strings.Replace(valid, "algorithm = \"sha256\"", "algorithm = 'sha1'", 1),
+		strings.Replace(valid, "algorithm = \"sha256\"", "", 1),
+		"version = '0.1.0'\nalgorithm = 'sha256'\n",
+	} {
+		t.Run(measured, func(t *testing.T) {
+			_, err := unmeasuredInitdataEnabled(measured)
+			assert.Error(t, err)
+		})
+	}
+	for _, algorithm := range []string{"sha256", "sha384", "sha512"} {
+		measured := strings.Replace(valid, "sha256", algorithm, 1)
+		enabled, err := unmeasuredInitdataEnabled(measured)
+		assert.NoError(t, err)
+		assert.True(t, enabled)
+	}
+	for _, measured := range []string{"", "version = '0.1.0'\nalgorithm = 'sha256'\n[data]\n"} {
+		enabled, err := unmeasuredInitdataEnabled(measured)
+		assert.NoError(t, err)
+		assert.False(t, enabled)
+	}
 }
 
 func TestAddHypervisorUnmeasuredInitdataOverrides(t *testing.T) {
@@ -123,8 +205,12 @@ region = "us-east-1"
 
 func TestAddHypervisorUnmeasuredInitdataOverridesRejectsInvalidInput(t *testing.T) {
 	tests := map[string]string{
-		"invalid encoding": "not-base64",
-		"invalid toml":     encodeGzipBase64(t, "not toml"),
+		"invalid encoding":    "not-base64",
+		"invalid toml":        encodeGzipBase64(t, "not toml"),
+		"unsupported version": encodeGzipBase64(t, "version = '0.2.0'\n[data]\n"),
+		"missing version":     encodeGzipBase64(t, "[data]\n"),
+		"missing data":        encodeGzipBase64(t, "version = '0.1.0'\n"),
+		"wrong data value":    encodeGzipBase64(t, "version = '0.1.0'\n[data]\n'aa.toml' = 1\n"),
 	}
 
 	for name, value := range tests {
