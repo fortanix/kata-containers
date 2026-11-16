@@ -49,6 +49,7 @@ else
 		"k8s-guest-pull-image-authenticated.bats" \
 		"k8s-guest-pull-image-signature.bats" \
 		"k8s-confidential-attestation.bats" \
+		"k8s-confidential-ccm.bats" \
 		"k8s-measured-rootfs.bats" \
 	)
 
