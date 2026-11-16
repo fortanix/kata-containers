@@ -430,11 +430,15 @@ mod tests {
             .unwrap()
             .contains_key(KATA_ANNO_CFG_HYPERVISOR_UNMEASURED_INIT_DATA));
         for enabled in [false, true] {
+            let allowed_keys = if enabled { "['aa.toml']" } else { "[]" };
             remote.config.security_info.initdata = format!(
                 r#"version = "0.1.0"
 algorithm = "sha256"
 [data]
-"unmeasured-initdata-cfg.toml" = 'enabled = {enabled}'
+"unmeasured-initdata-cfg.toml" = '''
+enabled = {enabled}
+allowed_keys = {allowed_keys}
+'''
 "#
             );
             let annotations = remote.prepare_annotations(&oci_annotations).unwrap();

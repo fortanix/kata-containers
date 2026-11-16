@@ -37,7 +37,10 @@ mod tests {
 
         let content = include_str!("texture/configuration-anno-0.toml");
         let mut measured = InitData::new("sha256", "0.1.0");
-        measured.insert_data("unmeasured-initdata-cfg.toml", "enabled = true");
+        measured.insert_data(
+            "unmeasured-initdata-cfg.toml",
+            "enabled = true\nallowed_keys = ['aa.toml']",
+        );
         let unmeasured = UnmeasuredInitData::new("0.1.0");
         let encoded = encode_unmeasured_initdata(&unmeasured);
 

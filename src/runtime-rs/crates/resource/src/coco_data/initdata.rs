@@ -113,11 +113,15 @@ mod tests {
             .is_none());
         assert!(!path.exists());
         for enabled in [false, true] {
+            let allowed_keys = if enabled { "['aa.toml']" } else { "[]" };
             config.security_info.initdata = format!(
                 r#"version = "0.1.0"
 algorithm = "sha256"
 [data]
-"unmeasured-initdata-cfg.toml" = 'enabled = {enabled}'
+"unmeasured-initdata-cfg.toml" = '''
+enabled = {enabled}
+allowed_keys = {allowed_keys}
+'''
 "#
             );
             let block = prepare_unmeasured_initdata(&config, &path).unwrap();
