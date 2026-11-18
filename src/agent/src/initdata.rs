@@ -23,16 +23,25 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// This is the target directory to store the extracted initdata.
 pub const INITDATA_PATH: &str = "/run/confidential-containers/initdata";
+pub const UNMEASURED_INITDATA_PATH: &str = "/run/unmeasured-cfg";
+
+/// Measured bytes captured by the processor before enforcing the unmeasured allowlist.
+const MEASURED_INITDATA_SNAPSHOT_PATH: &str = "/run/measured-cfg/initdata.toml";
 
 const AA_CONFIG_KEY: &str = "aa.toml";
 const CDH_CONFIG_KEY: &str = "cdh.toml";
 const POLICY_KEY: &str = "policy.rego";
+pub const UNMEASURED_INITDATA_CONFIG_KEY: &str = "unmeasured-initdata-cfg.toml";
 
 /// The path of initdata toml
 pub const INITDATA_TOML_PATH: &str = concatcp!(INITDATA_PATH, "/initdata.toml");
+pub const UNMEASURED_INITDATA_CONFIG_PATH: &str =
+    concatcp!(INITDATA_PATH, "/", UNMEASURED_INITDATA_CONFIG_KEY);
 
 /// The path of AA's config file
 pub const AA_CONFIG_PATH: &str = concatcp!(INITDATA_PATH, "/aa.toml");
+pub const UNMEASURED_AA_CONFIG_PATH: &str =
+    concatcp!(UNMEASURED_INITDATA_PATH, "/initdata/aa.toml");
 
 /// The path of CDH's config file
 pub const CDH_CONFIG_PATH: &str = concatcp!(INITDATA_PATH, "/cdh.toml");
@@ -125,12 +134,88 @@ pub struct InitdataReturnValue {
     pub _policy: Option<String>,
 }
 
+/// The standalone initdata-processor binary, installed into images that carry it.
+const INITDATA_PROCESSOR_PATH: &str = "/usr/bin/initdata-processor";
+
+/// Upper bound for one processor run; same as TimeoutStartSec of its systemd unit.
+const INITDATA_PROCESSOR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Run the initdata-processor from the agent on images without systemd (the NVIDIA GPU images
+/// use NVRC as init), where nothing else can order it before the agent.
+///
+/// Skipped when the binary is not installed, or when `ran_marker` exists: the processor's
+/// systemd unit creates [`UNMEASURED_INITDATA_PATH`] via `RuntimeDirectory=`, so its presence
+/// means the unit already ran. A processor failure is fatal, like the unit's `Requires=` on
+/// kata-agent.service. Returns whether the processor owns the measured snapshot.
+async fn run_initdata_processor(
+    logger: &Logger,
+    processor: &std::path::Path,
+    ran_marker: &std::path::Path,
+) -> Result<bool> {
+    if !processor.exists() {
+        debug!(logger, "initdata-processor not installed, skipping");
+        return Ok(false);
+    }
+    if ran_marker.exists() {
+        debug!(logger, "initdata-processor already ran (systemd), skipping");
+        return Ok(true);
+    }
+
+    info!(logger, "running initdata-processor"; "path" => processor.display());
+    let mut child = tokio::process::Command::new(processor)
+        .kill_on_drop(true)
+        .spawn()
+        .context("spawn initdata-processor failed")?;
+    let status = tokio::time::timeout(INITDATA_PROCESSOR_TIMEOUT, child.wait())
+        .await
+        .context("initdata-processor timed out")?
+        .context("wait for initdata-processor failed")?;
+    if !status.success() {
+        bail!("initdata-processor failed: {status}");
+    }
+    Ok(true)
+}
+
+/// The processor's capture binds allowlist enforcement and attestation to one document.
+/// A missing capture means the processor found no measured initdata. Never reread
+/// a host-backed device after processing, even when that capture is absent.
+async fn load_initdata(
+    logger: &Logger,
+    processed_snapshot: Option<&std::path::Path>,
+) -> Result<Option<Vec<u8>>> {
+    if let Some(snapshot) = processed_snapshot {
+        return match tokio::fs::read(snapshot).await {
+            Ok(content) => Ok(Some(content)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).context("read processor's measured initdata snapshot"),
+        };
+    }
+
+    let Some(device) = detect_initdata_device(logger).await? else {
+        return Ok(None);
+    };
+    read_initdata(&device).await.map(Some)
+}
+
 pub async fn initialize_initdata(logger: &Logger) -> Result<Option<InitdataReturnValue>> {
     let logger = logger.new(o!("subsystem" => "initdata"));
-    let Some(initdata_device) = detect_initdata_device(&logger).await? else {
+
+    let processor_ran = if cfg!(feature = "init-data") {
+        run_initdata_processor(
+            &logger,
+            std::path::Path::new(INITDATA_PROCESSOR_PATH),
+            std::path::Path::new(UNMEASURED_INITDATA_PATH),
+        )
+        .await?
+    } else {
+        false
+    };
+
+    let snapshot = processor_ran.then_some(std::path::Path::new(MEASURED_INITDATA_SNAPSHOT_PATH));
+    let Some(initdata_content) = load_initdata(&logger, snapshot).await? else {
         info!(
             logger,
-            "Initdata device not found, skip initdata initialization"
+            "Initdata not available, skip initdata initialization"
         );
         return Ok(None);
     };
@@ -138,10 +223,6 @@ pub async fn initialize_initdata(logger: &Logger) -> Result<Option<InitdataRetur
     tokio::fs::create_dir_all(INITDATA_PATH)
         .await
         .inspect_err(|e| error!(logger, "Failed to create initdata dir: {e:?}"))?;
-
-    let initdata_content = read_initdata(&initdata_device)
-        .await
-        .inspect_err(|e| error!(logger, "Failed to read initdata: {e:?}"))?;
 
     let initdata: InitData =
         toml::from_slice(&initdata_content).context("parse initdata failed")?;
@@ -173,6 +254,16 @@ pub async fn initialize_initdata(logger: &Logger) -> Result<Option<InitdataRetur
         info!(logger, "write CDH config from initdata");
     }
 
+    if let Some(config) = initdata.get_coco_data(UNMEASURED_INITDATA_CONFIG_KEY) {
+        tokio::fs::write(UNMEASURED_INITDATA_CONFIG_PATH, config)
+            .await
+            .context("write unmeasured initdata config failed")?;
+        info!(
+            logger,
+            "write unmeasured initdata config from measured initdata"
+        );
+    }
+
     debug!(logger, "Initdata digest: {}", STANDARD.encode(&_digest));
 
     let res = InitdataReturnValue {
@@ -194,5 +285,127 @@ mod tests {
     async fn parse_initdata() {
         let initdata = read_initdata(INITDATA_IMG_PATH).await.unwrap();
         assert_eq!(initdata, INITDATA_PLAINTEXT);
+    }
+
+    #[tokio::test]
+    async fn attestation_uses_capture_when_host_changes_measured_device() {
+        use async_compression::tokio::bufread::GzipEncoder;
+        use kata_types::initdata::InitData;
+        use sha2::{Digest, Sha384};
+        use tokio::io::AsyncReadExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let snapshot = root.path().join("initdata.toml");
+        let device = root.path().join("measured-device");
+        let policy_key = super::UNMEASURED_INITDATA_CONFIG_KEY;
+        let mut permissive = InitData::new("sha384", "0.1.0");
+        permissive.insert_data(policy_key, "enabled = true\nallowed_keys = ['aa.toml']");
+        let captured = permissive.to_vec().unwrap();
+        tokio::fs::write(&snapshot, &captured).await.unwrap();
+
+        // The host substitutes its genuine restrictive document after extraction.
+        let mut restrictive = InitData::new("sha384", "0.1.0");
+        restrictive.insert_data(policy_key, "enabled = false\nallowed_keys = []");
+        let replacement = restrictive.to_vec().unwrap();
+        let mut compressed = Vec::new();
+        GzipEncoder::new(replacement.as_slice())
+            .read_to_end(&mut compressed)
+            .await
+            .unwrap();
+        let mut wire = b"initdata".to_vec();
+        wire.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
+        wire.extend_from_slice(&compressed);
+        tokio::fs::write(&device, wire).await.unwrap();
+        assert_eq!(
+            read_initdata(device.to_str().unwrap()).await.unwrap(),
+            replacement
+        );
+
+        let logger = slog::Logger::root(slog::Discard, slog::o!());
+        let content = super::load_initdata(&logger, Some(&snapshot))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(content, captured);
+        // AA must see the permissive bytes and reject them against the restrictive digest.
+        assert_ne!(Sha384::digest(&content), Sha384::digest(&replacement));
+    }
+
+    #[tokio::test]
+    async fn missing_processed_snapshot_does_not_fall_back_to_device() {
+        let root = tempfile::tempdir().unwrap();
+        let logger = slog::Logger::root(slog::Discard, slog::o!());
+        assert!(
+            super::load_initdata(&logger, Some(&root.path().join("missing")))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn unreadable_processed_snapshot_is_fatal() {
+        let root = tempfile::tempdir().unwrap();
+        let logger = slog::Logger::root(slog::Discard, slog::o!());
+        let error = super::load_initdata(&logger, Some(root.path()))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("measured initdata snapshot"));
+    }
+
+    mod processor {
+        use crate::initdata::run_initdata_processor;
+        use std::path::Path;
+
+        fn logger() -> slog::Logger {
+            slog::Logger::root(slog::Discard, slog::o!())
+        }
+
+        #[tokio::test]
+        async fn skipped_when_binary_missing() {
+            let dir = tempfile::tempdir().unwrap();
+            let missing = dir.path().join("initdata-processor");
+            assert!(
+                !run_initdata_processor(&logger(), &missing, &dir.path().join("marker"))
+                    .await
+                    .unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn skipped_when_systemd_already_ran() {
+            // /bin/false would fail the run, so success proves the processor was not executed.
+            let dir = tempfile::tempdir().unwrap();
+            assert!(
+                run_initdata_processor(&logger(), Path::new("/bin/false"), dir.path())
+                    .await
+                    .unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn runs_when_installed_and_not_yet_ran() {
+            let dir = tempfile::tempdir().unwrap();
+            assert!(run_initdata_processor(
+                &logger(),
+                Path::new("/bin/true"),
+                &dir.path().join("marker"),
+            )
+            .await
+            .unwrap());
+        }
+
+        #[tokio::test]
+        async fn failure_is_fatal() {
+            let dir = tempfile::tempdir().unwrap();
+            let err = run_initdata_processor(
+                &logger(),
+                Path::new("/bin/false"),
+                &dir.path().join("marker"),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains("initdata-processor failed"));
+        }
     }
 }

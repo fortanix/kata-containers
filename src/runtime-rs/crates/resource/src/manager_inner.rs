@@ -217,7 +217,7 @@ impl ResourceManagerInner {
                     .await
                     .context("do handle port device failed.")?;
                 }
-                ResourceConfig::InitData(id) => {
+                ResourceConfig::InitData(id) | ResourceConfig::UnmeasuredInitData(id) => {
                     do_handle_device(&self.device_manager, &DeviceConfig::BlockCfgModern(id))
                         .await
                         .context("do handle initdata block device failed.")?;
