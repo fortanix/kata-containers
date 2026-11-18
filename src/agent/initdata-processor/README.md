@@ -214,3 +214,13 @@ WantedBy=kata-containers.target
 - `Type=oneshot`: Service executes once and exits, suitable for one-time initialization tasks
 - `RemainAfterExit=yes`: Systemd considers the service active even after the process exits
 - `Restart=no`: No automatic restart, as this is a one-time initialization task
+
+### Captured measured data and attestation
+
+The processor writes the exact decompressed measured document to
+`/run/measured-cfg/initdata.toml` before enforcing the unmeasured allowlist.
+When the processor is installed, kata-agent reads this capture for its digest,
+measured configuration, and the document passed to AA. A host changing the block
+device after extraction cannot substitute a different policy for verification.
+An absent capture represents absent measured initdata and does not trigger a
+second device read. Images without the processor retain direct device loading.
