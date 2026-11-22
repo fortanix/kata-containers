@@ -24,10 +24,36 @@ ccm_check_env() {
 ccm_kernel_params() {
 	local params="${1:-}"
 
-	if is_tdx_hypervisor "${KATA_HYPERVISOR}"; then
+	if is_tdx_hypervisor "${KATA_HYPERVISOR}" || [[ "${KATA_HYPERVISOR}" == qemu-nvidia-gpu-tdx* ]]; then
 		params="agent.guest_components_rest_api=all${params:+ ${params}}"
 	fi
 	echo "${params}"
+}
+
+ccm_check_gpu() {
+	local available
+
+	is_confidential_gpu_hypervisor || return 0
+	available="$(kubectl get node "${node}" -o jsonpath='{.status.allocatable.nvidia\.com/pgpu}')"
+	if [[ ! "${available}" =~ ^[1-9][0-9]*$ ]]; then
+		echo "${node} has no allocatable nvidia.com/pgpu" >&2
+		return 1
+	fi
+}
+
+ccm_create_pod_yaml() {
+	local image="$1"
+	local kernel_params="$2"
+	local initdata="$3"
+
+	create_coco_pod_yaml_with_annotations "${image}" "${kernel_params}" "${initdata}" "${node}"
+
+	is_confidential_gpu_hypervisor || return 0
+	yq -i '
+		.spec.containers[0].resources.limits."nvidia.com/pgpu" = "1" |
+		.spec.containers[0].resources.limits.memory = "16Gi" |
+		.spec.containers[0].securityContext.privileged = true
+	' "${kata_pod}"
 }
 
 _ccm_domain_names_toml() {

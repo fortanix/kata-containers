@@ -24,6 +24,7 @@ setup() {
 
 	setup_common || die "setup_common failed"
 	ccm_check_env || die "CCM / DSM settings are missing"
+	ccm_check_gpu || die "GPU runtime class selected but no GPU is available"
 
 	policy_settings_dir="$(create_tmp_policy_settings_dir "${pod_config_dir}")"
 }
@@ -31,7 +32,7 @@ setup() {
 @test "Create a pod from a DSM-encrypted image with valid initdata" {
 	initdata="$(get_initdata_ccm)"
 
-	create_coco_pod_yaml_with_annotations "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}" "${node}"
+	ccm_create_pod_yaml "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}"
 	auto_generate_policy "${policy_settings_dir}" "${kata_pod}"
 
 	echo "Pod ${kata_pod}: $(cat ${kata_pod})"
@@ -42,7 +43,7 @@ setup() {
 @test "Pod with incorrect initdata should not start" {
 	initdata="$(get_initdata_ccm "# incorrect")"
 
-	create_coco_pod_yaml_with_annotations "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}" "${node}"
+	ccm_create_pod_yaml "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}"
 	auto_generate_policy "${policy_settings_dir}" "${kata_pod}"
 
 	echo "Pod ${kata_pod}: $(cat ${kata_pod})"
@@ -54,7 +55,7 @@ setup() {
 @test "Pod with a changed guest measurement should not start" {
 	initdata="$(get_initdata_ccm)"
 
-	create_coco_pod_yaml_with_annotations "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params agent.log=debug)" "${initdata}" "${node}"
+	ccm_create_pod_yaml "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params agent.log=debug)" "${initdata}"
 	auto_generate_policy "${policy_settings_dir}" "${kata_pod}"
 
 	echo "Pod ${kata_pod}: $(cat ${kata_pod})"
@@ -64,7 +65,7 @@ setup() {
 }
 
 @test "Pod from a DSM-encrypted image without initdata should not start" {
-	create_coco_pod_yaml_with_annotations "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "" "${node}"
+	ccm_create_pod_yaml "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" ""
 	auto_generate_policy "${policy_settings_dir}" "${kata_pod}"
 
 	echo "Pod ${kata_pod}: $(cat ${kata_pod})"
@@ -76,7 +77,7 @@ setup() {
 @test "Create a pod from an unencrypted image with CCM initdata" {
 	initdata="$(get_initdata_ccm)"
 
-	create_coco_pod_yaml_with_annotations "${CCM_UNENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}" "${node}"
+	ccm_create_pod_yaml "${CCM_UNENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}"
 	auto_generate_policy "${policy_settings_dir}" "${kata_pod}"
 
 	echo "Pod ${kata_pod}: $(cat ${kata_pod})"
@@ -87,7 +88,7 @@ setup() {
 @test "Pod with an invalid runtimeClassName is rejected" {
 	initdata="$(get_initdata_ccm)"
 
-	create_coco_pod_yaml_with_annotations "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}" "${node}"
+	ccm_create_pod_yaml "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}"
 	yq -i '.spec.runtimeClassName = "kata-invalid"' "${kata_pod}"
 
 	echo "Pod ${kata_pod}: $(cat ${kata_pod})"
@@ -105,7 +106,7 @@ setup() {
 	initdata="$(get_initdata_ccm_unmeasured_enabled)"
 	unmeasured_initdata="$(get_unmeasured_initdata_ccm)"
 
-	create_coco_pod_yaml_with_annotations "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}" "${node}"
+	ccm_create_pod_yaml "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}"
 	yq -i ".metadata.annotations.\"io.katacontainers.config.hypervisor.cc_unmeasured_init_data\" = \"${unmeasured_initdata}\"" "${kata_pod}"
 	auto_generate_policy "${policy_settings_dir}" "${kata_pod}"
 
@@ -123,7 +124,7 @@ setup() {
 	initdata="$(get_initdata_ccm_unmeasured_enabled)"
 	unmeasured_initdata="$(get_unmeasured_initdata_ccm "${unknown_appconfig_id}")"
 
-	create_coco_pod_yaml_with_annotations "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}" "${node}"
+	ccm_create_pod_yaml "${DSM_ENCRYPTED_IMAGE}" "$(ccm_kernel_params)" "${initdata}"
 	yq -i ".metadata.annotations.\"io.katacontainers.config.hypervisor.cc_unmeasured_init_data\" = \"${unmeasured_initdata}\"" "${kata_pod}"
 	auto_generate_policy "${policy_settings_dir}" "${kata_pod}"
 
