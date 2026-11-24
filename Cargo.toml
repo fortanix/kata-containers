@@ -20,6 +20,8 @@ members = [
 
   # kata-agent
   "src/agent",
+  "src/agent/initdata-processor",
+  "src/agent/policy",
   "src/agent/rustjail",
   "src/agent/policy",
   "src/agent/vsock-exporter",
@@ -164,6 +166,7 @@ container-device-interface = "1.1.1"
 containerd-shim = { version = "0.11.0", features = ["async"] }
 containerd-shim-protos = { version = "0.11.0", features = ["async"] }
 derivative = "2.2.0"
+flate2 = "1.1"
 futures = "0.3.30"
 go-flag = "0.1.0"
 bytes = "1.0"

@@ -387,23 +387,29 @@ func (q *qemuS390x) appendVFIODevice(devices []govmmQemu.Device, vfioDev config.
 }
 
 func (q *qemuS390x) buildInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device {
+	return q.buildInitdataBlockDevice(ctx, devices, initdataImage, "initdata")
+}
 
+func (q *qemuS390x) buildUnmeasuredInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device {
+	return q.buildInitdataBlockDevice(ctx, devices, initdataImage, "unmeasured-initdata")
+}
+
+func (q *qemuS390x) buildInitdataBlockDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string, id string) []govmmQemu.Device {
 	var transport govmmQemu.VirtioTransport
 	var devNo string
 
 	transport = govmmQemu.TransportCCW
-	id := "initdata"
 	addr, bridge, err := q.addDeviceToBridge(ctx, id, types.CCW)
 	if err != nil {
-		hvLogger.WithError(err).Error("Failed to allocate CCW address for initdata")
+		hvLogger.WithError(err).Errorf("Failed to allocate CCW address for %s", id)
 		return nil
 	}
 	devNo, err = bridge.AddressFormatCCW(addr)
 	if err != nil {
-		hvLogger.WithError(err).Error("Failed to format CCW address for initdata")
+		hvLogger.WithError(err).Errorf("Failed to format CCW address for %s", id)
 		return nil
 	}
-	hvLogger.WithField("devno", devNo).Info("Using dynamic CCW DevNo for initdata")
+	hvLogger.WithField("devno", devNo).Infof("Using dynamic CCW DevNo for %s", id)
 
 	device := govmmQemu.BlockDevice{
 		Driver:    govmmQemu.VirtioBlock,

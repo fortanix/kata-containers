@@ -179,6 +179,9 @@ type qemuArch interface {
 
 	// buildInitdataDevice creates an initdata device for the given architecture.
 	buildInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device
+
+	// buildUnmeasuredInitdataDevice creates an unmeasured initdata device for the given architecture.
+	buildUnmeasuredInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device
 }
 
 type qemuArchBase struct {
@@ -992,10 +995,18 @@ func (q *qemuArchBase) qomGetSlot(qomPath string, qmpCh *qmpChannel) (types.PciS
 
 // build initdata device
 func (q *qemuArchBase) buildInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device {
+	return q.buildInitdataBlockDevice(devices, initdataImage, "initdata")
+}
+
+func (q *qemuArchBase) buildUnmeasuredInitdataDevice(ctx context.Context, devices []govmmQemu.Device, initdataImage string) []govmmQemu.Device {
+	return q.buildInitdataBlockDevice(devices, initdataImage, "unmeasured-initdata")
+}
+
+func (q *qemuArchBase) buildInitdataBlockDevice(devices []govmmQemu.Device, initdataImage string, id string) []govmmQemu.Device {
 	device := govmmQemu.BlockDevice{
 		Driver:    govmmQemu.VirtioBlock,
 		Transport: govmmQemu.TransportPCI,
-		ID:        "initdata",
+		ID:        id,
 		File:      initdataImage,
 		SCSI:      false,
 		WCE:       false,

@@ -1,0 +1,34 @@
+# Copyright (c) 2026 Ant Group
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+[Unit]
+Description=Kata InitData Processor
+Documentation=https://github.com/kata-containers/kata-containers
+DefaultDependencies=no
+After=local-fs.target
+Before=kata-agent.service
+ConditionPathExists=/usr/bin/initdata-processor
+ConditionFileIsExecutable=/usr/bin/initdata-processor
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/initdata-processor
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+Restart=no
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RuntimeDirectory=measured-cfg unmeasured-cfg
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/measured-cfg /run/unmeasured-cfg
+
+[Install]
+WantedBy=kata-containers.target

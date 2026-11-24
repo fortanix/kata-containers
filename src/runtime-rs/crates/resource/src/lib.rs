@@ -45,6 +45,7 @@ pub enum ResourceConfig {
     VfioDeviceModern(VfioDeviceBase),
     PortDevice(PortDeviceConfig),
     InitData(BlockConfigModern),
+    UnmeasuredInitData(BlockConfigModern),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
