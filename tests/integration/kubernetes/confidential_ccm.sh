@@ -24,10 +24,7 @@ ccm_check_env() {
 ccm_kernel_params() {
 	local params="${1:-}"
 
-	if is_tdx_hypervisor "${KATA_HYPERVISOR}" || [[ "${KATA_HYPERVISOR}" == qemu-nvidia-gpu-tdx* ]]; then
-		params="agent.guest_components_rest_api=all${params:+ ${params}}"
-	fi
-	echo "${params}"
+	echo "agent.guest_components_rest_api=all${params:+ ${params}}"
 }
 
 ccm_check_gpu() {
